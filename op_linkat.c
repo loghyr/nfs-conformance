@@ -240,13 +240,29 @@ static void case_link_to_symlink(void)
 
 	/*
 	 * Plain link() on a symlink: POSIX leaves this implementation-
-	 * defined (may link to the symlink OR follow it).  We want
-	 * "link to the symlink itself"; use linkat with no flags on
-	 * Linux guarantees no-follow.  Accept either result for
-	 * cross-platform portability; verify the hardlink's mode
-	 * matches whichever object link() picked.
+	 * defined (may link to the symlink OR follow it).  RFC 7530
+	 * S18.14 also permits the NFS server to reject a LINK whose
+	 * source is a non-regular file with NFS4ERR_NOTSUPP, which
+	 * the client surfaces as EPERM (or ENOSYS / EOPNOTSUPP /
+	 * ENOTSUP on other stacks).  Treat those as a spec-legal
+	 * server refusal and NOTE rather than FAIL.
+	 *
+	 * When the call succeeds, we expect linkat without
+	 * AT_SYMLINK_FOLLOW to hardlink the symlink itself -- same
+	 * ino as link_.  A different ino means the server followed
+	 * the link, which is non-conforming.
 	 */
 	if (linkat(AT_FDCWD, link_, AT_FDCWD, hardlink, 0) != 0) {
+		if (errno == EPERM || errno == ENOSYS
+		    || errno == EOPNOTSUPP || errno == ENOTSUP) {
+			if (!Sflag)
+				printf("NOTE: %s: case5 server rejected "
+				       "hardlink-to-symlink with %s "
+				       "(RFC 7530 S18.14 permits "
+				       "NFS4ERR_NOTSUPP here)\n",
+				       myname, strerror(errno));
+			goto out;
+		}
 		complain("case5: linkat: %s", strerror(errno));
 		goto out;
 	}

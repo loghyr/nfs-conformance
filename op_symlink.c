@@ -196,10 +196,23 @@ static void case_long_target(void)
 	target[want] = '\0';
 
 	if (symlinkat(target, AT_FDCWD, linkname) != 0) {
-		if (errno == ENAMETOOLONG || errno == EINVAL) {
+		if (errno == ENAMETOOLONG || errno == EINVAL
+		    || errno == EIO) {
+			/*
+			 * ENAMETOOLONG is the spec-correct answer
+			 * (RFC 7530 S18.26 -> NFS4ERR_NAMETOOLONG).
+			 * EINVAL and EIO are less precise but seen in
+			 * the wild: EIO on some BSD NFSv4 servers is a
+			 * catch-all for "server didn't like this"
+			 * rather than a distinct errno.  Accept with
+			 * a NOTE so we don't false-alarm on server-
+			 * side errno-mapping quirks.
+			 */
 			if (!Sflag)
 				printf("NOTE: %s: case4 server rejected "
-				       "4000-byte target with %s (server cap)\n",
+				       "4000-byte target with %s (server "
+				       "cap; RFC-clean answer would be "
+				       "ENAMETOOLONG)\n",
 				       myname, strerror(errno));
 			free(target);
 			return;
