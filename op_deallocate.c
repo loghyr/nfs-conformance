@@ -1,5 +1,5 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
 /*
  * op_deallocate.c -- exercise fallocate(FALLOC_FL_PUNCH_HOLE), which
  * NFSv4.2 servers translate into DEALLOCATE (RFC 7862 S4).

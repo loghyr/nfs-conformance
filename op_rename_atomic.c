@@ -1,5 +1,5 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
 /*
  * op_rename_atomic.c -- exercise the renameat2(2) atomicity flags,
  * which map to NFSv4 RENAME with specific server-side semantics:

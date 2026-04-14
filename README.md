@@ -1,6 +1,6 @@
 <!--
 SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
-SPDX-License-Identifier: Apache-2.0
+SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
 -->
 
 # nfsv42-tests
@@ -132,5 +132,8 @@ make check CHECK_DIR=/mnt/nfs42
 
 ## License
 
-Apache License 2.0.  See `LICENSE` for the full text and `NOTICE`
+Dual-licensed: `BSD-2-Clause OR GPL-2.0-only` at your option.  This
+lets the code flow into both the permissive BSD/macOS/Solaris NFS
+test ecosystems and the GPLv2 Linux NFS ecosystem (kernel, nfs-utils,
+ktls-utils, tlshd).  See `LICENSE` for the full text and `NOTICE`
 for attribution.

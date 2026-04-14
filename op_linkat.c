@@ -1,5 +1,5 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
 /*
  * op_linkat.c -- exercise NFSv4 LINK op (RFC 7530 S18.14) via
  * link / linkat and the POSIX st_nlink invariants.

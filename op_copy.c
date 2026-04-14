@@ -1,5 +1,5 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
 /*
  * op_copy.c -- exercise copy_file_range(2), which NFSv4.2 servers
  * translate into a COPY op (RFC 7862 S7) when source and

@@ -1,5 +1,5 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
 /*
  * op_seek.c -- exercise SEEK_HOLE / SEEK_DATA (NFSv4.2 SEEK,
  * RFC 7862 S6) and verify reads across holes return zeros

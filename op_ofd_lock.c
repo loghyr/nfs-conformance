@@ -1,5 +1,5 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
 /*
  * op_ofd_lock.c -- exercise fcntl(F_OFD_SETLK / F_OFD_GETLK), the
  * Linux open-file-description locks (3.15+).  NFSv4.1 LOCK / LOCKU

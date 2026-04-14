@@ -1,5 +1,5 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
 /*
  * op_statx_btime.c -- exercise statx(STATX_BTIME), which surfaces
  * the NFSv4.2 `time_create` attribute (RFC 7862 S12.2).

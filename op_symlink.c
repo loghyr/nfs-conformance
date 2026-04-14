@@ -1,5 +1,5 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
-/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
 /*
  * op_symlink.c -- exercise NFSv4 SYMLINK / READLINK ops (RFC 7530
  * S18.26 / S18.22).  Tests the observable POSIX surface:
