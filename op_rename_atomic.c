@@ -119,6 +119,44 @@ static ssize_t read_all(const char *path, char *buf, size_t cap)
 	return n;
 }
 
+/*
+ * feature_probe_noreplace -- try a no-op rename with RENAME_NOREPLACE;
+ * if the kernel or server returns EINVAL / ENOSYS / ENOTSUP, the flag
+ * is not supported over this mount (common on Linux NFS clients with
+ * kernel < 6.1 where the client doesn't pass flags through) and the
+ * whole test SKIPs cleanly.  This must run before case_noreplace_*
+ * so that case-level failure logic doesn't false-alarm on the gap.
+ */
+static void feature_probe_noreplace(void)
+{
+	char src[64], dst[64];
+	snprintf(src, sizeof(src), "t_rn.probe.a.%ld", (long)getpid());
+	snprintf(dst, sizeof(dst), "t_rn.probe.b.%ld", (long)getpid());
+	unlink(src); unlink(dst);
+
+	if (write_tiny(src, "probe\n") < 0) {
+		complain("feature_probe: write: %s", strerror(errno));
+		return;
+	}
+
+	if (renameat2(AT_FDCWD, src, AT_FDCWD, dst, RENAME_NOREPLACE) == 0) {
+		/* Supported.  Clean up the probe file (now at dst). */
+		unlink(dst);
+		return;
+	}
+
+	int saved = errno;
+	unlink(src);
+	unlink(dst);
+	if (saved == EINVAL || saved == ENOSYS || saved == ENOTSUP) {
+		skip("%s: renameat2 RENAME_NOREPLACE not supported "
+		     "by this kernel/server (returned %s); Linux NFS "
+		     "client needs ~6.1+ for flag passthrough",
+		     myname, strerror(saved));
+	}
+	complain("feature_probe: unexpected errno %s", strerror(saved));
+}
+
 static void case_noreplace_to_empty(void)
 {
 	char src[64], dst[64];
@@ -301,6 +339,8 @@ next:
 	prelude(myname,
 		"renameat2 atomic flags -> NFSv4 RENAME semantics");
 	cd_or_skip(myname, dir, Nflag);
+
+	feature_probe_noreplace();
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
