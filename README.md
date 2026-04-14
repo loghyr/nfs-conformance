@@ -43,6 +43,17 @@ NFSv4.1's marquee additions (sessions, pNFS, EXCHANGE_ID / CREATE_SESSION, SECIN
 |---|---|---|---|
 | `op_ofd_lock` | LOCK / LOCKU / LOCKT with OFD-scoped stateids | `fcntl(F_OFD_SETLK / F_OFD_GETLK)` | Linux 3.15+ |
 
+### NFSv4 baseline ops
+
+Bread-and-butter NFSv4 ops that predate v4.1 but matter for every server.  Cthon04 covers some of these; these tests are a modern, at-syscall-API flavour focused on edge cases that catch real bugs.
+
+| Test | Op | Userspace API | Portability |
+|---|---|---|---|
+| `op_change_attr` | change attribute (RFC 7530 §5.8.1.4) | `statx(STATX_CHANGE_COOKIE)` | Linux 6.5+ |
+| `op_rename_atomic` | RENAME with atomic flags | `renameat2(RENAME_NOREPLACE / RENAME_EXCHANGE)` | Linux (glibc 2.28+) |
+| `op_symlink` | SYMLINK, READLINK (RFC 7530 §18.22/§18.26) | `symlinkat`, `readlinkat` | POSIX |
+| `op_linkat` | LINK (RFC 7530 §18.14) | `link`, `linkat` | POSIX (case 6 Linux-only) |
+
 ## Non-goals (deferred)
 
 Deliberately NOT covered by this suite, because there is no portable

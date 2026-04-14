@@ -8,9 +8,13 @@ op_clone
 op_xattr
 op_statx_btime
 op_ofd_lock
+op_change_attr
+op_rename_atomic
+op_symlink
+op_linkat
 *.o
 *.dSYM/
 
 # Scratch files left if a test aborts before cleanup
-t_*.*
+t_*
 t1[0-5].*

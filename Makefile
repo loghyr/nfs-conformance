@@ -26,7 +26,8 @@ PREFIX    ?= /usr/local
 libexecdir ?= $(PREFIX)/libexec
 
 TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
-        op_xattr op_statx_btime op_ofd_lock
+        op_xattr op_statx_btime op_ofd_lock \
+        op_change_attr op_rename_atomic op_symlink op_linkat
 
 CHECK_DIR ?= .
 
