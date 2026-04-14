@@ -17,6 +17,8 @@ Each test drives the NFSv4.2 op under test via its portable userspace
 equivalent.  If the userspace equivalent is unavailable on the
 running system, the test SKIPs instead of failing.
 
+### NFSv4.2 (RFC 7862)
+
 | Test | Op | Userspace API | Portability |
 |---|---|---|---|
 | `op_allocate` | ALLOCATE | `posix_fallocate(3)` | POSIX |
@@ -25,6 +27,21 @@ running system, the test SKIPs instead of failing.
 | `op_copy` | COPY | `copy_file_range(2)` | Linux 4.5+, FreeBSD 13+ |
 | `op_deallocate` | DEALLOCATE | `fallocate(FALLOC_FL_PUNCH_HOLE)` | Linux |
 | `op_clone` | CLONE | `ioctl(FICLONE)` | Linux + reflink FS (btrfs, xfs reflink, zfs) |
+| `op_statx_btime` | `time_create` (S12.2) | `statx(STATX_BTIME)` | Linux 4.11+ |
+
+### NFSv4.2 XATTR extension (RFC 8276)
+
+| Test | Op | Userspace API | Portability |
+|---|---|---|---|
+| `op_xattr` | GETXATTR, SETXATTR, LISTXATTRS, REMOVEXATTR | `setxattr(2)`, `getxattr(2)`, `listxattr(2)`, `removexattr(2)` (user.* namespace) | Linux |
+
+### NFSv4.1 coverage
+
+NFSv4.1's marquee additions (sessions, pNFS, EXCHANGE_ID / CREATE_SESSION, SECINFO_NO_NAME, directory delegations) don't have portable userspace hooks — they are state-machine internals or kernel-internal layer switches.  The one v4.1-era feature that *does* have a crisp syscall surface is open-file-description locks:
+
+| Test | Op | Userspace API | Portability |
+|---|---|---|---|
+| `op_ofd_lock` | LOCK / LOCKU / LOCKT with OFD-scoped stateids | `fcntl(F_OFD_SETLK / F_OFD_GETLK)` | Linux 3.15+ |
 
 ## Non-goals (deferred)
 
@@ -41,6 +58,10 @@ userspace hook that exercises them:
   no userspace trigger.
 - **SEC_LABEL / Labeled NFS** (RFC 7204).  SELinux-specific policy
   attribute work; different audience, different test shape.
+- **NFSv4.1 sessions, pNFS, directory delegations, SECINFO_NO_NAME,
+  EXCHANGE_ID, CREATE_SESSION, referrals**.  Internal state-machine
+  ops with no userspace knob.  `op_ofd_lock` is the one v4.1 feature
+  with a clean syscall surface.
 
 ## Building
 

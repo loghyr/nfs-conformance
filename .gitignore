@@ -5,8 +5,12 @@ op_seek
 op_copy
 op_deallocate
 op_clone
+op_xattr
+op_statx_btime
+op_ofd_lock
 *.o
 *.dSYM/
 
 # Scratch files left if a test aborts before cleanup
+t_*.*
 t1[0-5].*
