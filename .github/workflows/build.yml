@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+#
+# build.yml -- CI: build and run the suite on Linux and macOS.
+#
+# Linux runs the POSIX tests live (op_allocate, op_io_advise, op_seek)
+# against the GitHub runner's local filesystem.  op_copy runs against
+# tmpfs; op_deallocate runs against ext4; op_clone SKIPs because the
+# runner's FS is ext4 without reflink support -- that is correct and
+# expected behaviour.
+#
+# macOS exercises the compile-time skip stubs: every test compiles
+# cleanly and exits 77 at runtime.
+#
+# The runtests driver returns 0 for a mix of PASS + SKIP, which is
+# what both CI legs expect.
+
+name: build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: make
+        run: make
+      - name: runtests
+        run: ./runtests

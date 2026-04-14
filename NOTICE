@@ -1,0 +1,6 @@
+nfsv42-tests
+Copyright 2026 Tom Haynes
+
+Inspired by the Connectathon NFS test suite (cthon04).  No cthon04
+code is incorporated; this is an independent implementation under
+the Apache License 2.0.

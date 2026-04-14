@@ -1,0 +1,104 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+#
+# runtests -- drive the nfsv42-tests suite and print a summary.
+#
+# Usage:
+#   ./runtests [-d DIR] [-s] [-t] [test-name ...]
+#
+# With no test arguments, runs all op_* tests in order.  Named
+# arguments run only those (e.g. `./runtests op_seek op_copy`).
+#
+# Per-test exit codes (GNU automake TESTS convention):
+#   0  PASS
+#   1  FAIL
+#   77 SKIP
+#   99 BUG (test crashed or unexpected exit)
+#
+# Suite-level exit code:
+#   0  all PASS or SKIP
+#   1  at least one FAIL
+#   98 at least one test binary missing (not built)
+#   99 at least one BUG
+#
+# Output is stable enough to be wrapped by external CI harnesses
+# (grep for "^summary:" or the per-line "<test>: <verdict>").
+
+set -eu
+
+DIR="."
+EXTRA_FLAGS=""
+SELECTED=""
+
+usage() {
+    sed -n '4,26p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -d) DIR="$2"; shift 2;;
+        -d*) DIR="${1#-d}"; shift;;
+        -s) EXTRA_FLAGS="$EXTRA_FLAGS -s"; shift;;
+        -t) EXTRA_FLAGS="$EXTRA_FLAGS -t"; shift;;
+        -h|--help) usage; exit 0;;
+        --) shift; SELECTED="$SELECTED $*"; break;;
+        -*) echo "runtests: unknown option $1" >&2; exit 2;;
+        op_*) SELECTED="$SELECTED $1"; shift;;
+        *) echo "runtests: unrecognised argument $1" >&2; exit 2;;
+    esac
+done
+
+if [ -z "$SELECTED" ]; then
+    SELECTED="op_allocate op_io_advise op_seek op_copy op_deallocate op_clone"
+fi
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+
+passed=0
+failed=0
+skipped=0
+missing=0
+bugs=0
+worst=0
+
+run_one() {
+    t=$1
+    bin="$HERE/$t"
+    if [ ! -x "$bin" ]; then
+        printf '%-16s MISS (binary not built; run `make`)\n' "$t"
+        missing=$((missing + 1))
+        if [ $worst -lt 98 ]; then worst=98; fi
+        return
+    fi
+    set +e
+    "$bin" -d "$DIR" $EXTRA_FLAGS
+    rc=$?
+    set -e
+    case $rc in
+        0)
+            passed=$((passed + 1))
+            ;;
+        77)
+            skipped=$((skipped + 1))
+            ;;
+        1)
+            failed=$((failed + 1))
+            if [ $worst -lt 1 ]; then worst=1; fi
+            ;;
+        *)
+            bugs=$((bugs + 1))
+            printf '%-16s exited %d (bug)\n' "$t" "$rc"
+            if [ $worst -lt 99 ]; then worst=99; fi
+            ;;
+    esac
+}
+
+printf '\n=== nfsv42-tests under %s ===\n\n' "$DIR"
+for t in $SELECTED; do
+    run_one "$t"
+done
+printf '\nsummary: %d passed, %d failed, %d skipped, %d missing, %d bugs\n' \
+    "$passed" "$failed" "$skipped" "$missing" "$bugs"
+
+exit "$worst"
