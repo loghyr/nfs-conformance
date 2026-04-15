@@ -21,7 +21,6 @@ _cleanup()
 . ./common/filter
 . ./common/cthon26
 
-_supported_fs nfs
 _require_test
 _require_cthon26_binary op_seek
 
