@@ -216,7 +216,8 @@ static inline size_t rpc_build_null_call(uint8_t *buf, size_t bufsz,
 					 uint32_t xid, uint32_t prog,
 					 uint32_t vers, uint32_t cred_flavor)
 {
-	/* Body is 10 fields x 4 bytes = 40 bytes */
+	/* Fragment body: 10 fields x 4 bytes = 40 bytes (excludes the
+	 * 4-byte TCP record marker; total written = 44 bytes). */
 	const uint32_t body_len = 40;
 	size_t pos = 0;
 

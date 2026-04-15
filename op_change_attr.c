@@ -149,7 +149,7 @@ static void case_write_advances(const char *path)
 
 static void case_monotonic(const char *path)
 {
-	int fd = open(path, O_WRONLY | O_APPEND);
+	int fd = open(path, O_WRONLY);
 	if (fd < 0) { complain("case3: open: %s", strerror(errno)); return; }
 
 	int ok;

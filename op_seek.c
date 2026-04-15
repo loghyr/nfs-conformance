@@ -111,7 +111,7 @@ static void verify_seek_hole_data(int fd)
 		complain("SEEK_DATA at 0 overshot: %lld > island0 %lld",
 			 (long long)pos, (long long)island_at(0));
 
-	/* Case 1b: SEEK_HOLE from the end of island 0 finds a hole
+	/* Case 1b: SEEK_HOLE from the start of island 0 finds the hole
 	 * at or after the end of the island. */
 	off_t isl0_end = island_at(0) + ISLAND_LEN;
 	off_t hole = lseek(fd, island_at(0), SEEK_HOLE);
