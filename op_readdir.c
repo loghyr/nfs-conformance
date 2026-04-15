@@ -209,14 +209,18 @@ static void case_mixed_types(void)
 
 	int saw_reg = 0, saw_sub = 0, saw_lnk = 0;
 	struct dirent *de;
-	char epath[256];
+	char epath[4096];
 	struct stat st;
 
 	while ((de = readdir(dp)) != NULL) {
 		if (strcmp(de->d_name, ".") == 0 ||
 		    strcmp(de->d_name, "..") == 0)
 			continue;
-		snprintf(epath, sizeof(epath), "%s/%s", d, de->d_name);
+		int n = snprintf(epath, sizeof(epath), "%s/%s", d, de->d_name);
+		if (n < 0 || (size_t)n >= sizeof(epath)) {
+			complain("case2: path too long: %s/%s", d, de->d_name);
+			continue;
+		}
 		if (lstat(epath, &st) != 0) {
 			complain("case2: lstat(%s): %s", epath, strerror(errno));
 			continue;
