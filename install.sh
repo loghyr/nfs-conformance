@@ -57,7 +57,11 @@ install_one() {
         return
     fi
     if [ $BACKUP -eq 1 ] && [ -e "$dst" ]; then
-        cp -p "$dst" "$dst.bak.$(date +%s)"
+        # mktemp gives us a collision-free filename even for rapid
+        # successive runs (date +%s is second-granularity and can
+        # overwrite a backup created in the same second).
+        bak=$(mktemp "$dst.bak.XXXXXX")
+        cp -p "$dst" "$bak"
     fi
     case "$MODE" in
         copy)
@@ -77,11 +81,16 @@ install_one "$SCRIPT_DIR/common/cthon26" "$DEST/common/cthon26"
 for f in "$SCRIPT_DIR"/tests/nfs/*; do
     name=$(basename "$f")
     install_one "$f" "$DEST/tests/nfs/$name"
-    # Test wrappers need to be executable.
-    case "$name" in
-        *.out) ;;
-        *)     chmod +x "$DEST/tests/nfs/$name" 2>/dev/null || true;;
-    esac
+    # Test wrappers need to be executable under copy mode.  In
+    # symlink mode chmod follows the link and would modify the
+    # cthon26 source file, which is already executable in git --
+    # skip the chmod so the source file's permissions stay pristine.
+    if [ "$MODE" = copy ]; then
+        case "$name" in
+            *.out) ;;
+            *)     chmod +x "$DEST/tests/nfs/$name" 2>/dev/null || true;;
+        esac
+    fi
 done
 
 if [ $DRY -eq 0 ]; then
