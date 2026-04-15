@@ -2,10 +2,10 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
 #
-# runtests -- drive the nfsv42-tests suite and print a summary.
+# runtests -- drive the nfsv42-tests suite.
 #
 # Usage:
-#   ./runtests [-d DIR] [-s] [-t] [test-name ...]
+#   ./runtests [-d DIR] [-s] [-t] [--tap] [test-name ...]
 #
 # With no test arguments, runs all op_* tests in order.  Named
 # arguments run only those (e.g. `./runtests op_seek op_copy`).
@@ -22,17 +22,33 @@
 #   98 at least one test binary missing (not built)
 #   99 at least one BUG
 #
-# Output is stable enough to be wrapped by external CI harnesses
-# (grep for "^summary:" or the per-line "<test>: <verdict>").
+# Output modes:
+#   default : human-readable "TEST:/PASS:/FAIL:/SKIP:" plus a summary
+#             line at the end.  Stable for grep-based CI.
+#   --tap   : TAP13 aggregate output.  Emits "1..N", one "ok K - name"
+#             per passing test, "not ok K - name" per failure,
+#             "ok K - name # SKIP reason" per skip.  Test binary
+#             stdout is captured and re-emitted as "#" diagnostic
+#             lines so the stream stays valid TAP.  Pipe this to
+#             `prove` or `tappy` for structured reporting.
+#
+# Parallel runs:
+#   For parallelism across independent mounts, use `prove` directly:
+#     NFSV42_TESTS_TAP=1 prove -j N ./op_*
+#   Each binary emits its own "1..1" stream and prove aggregates.
+#   Note: running tests in parallel against the SAME mount is unsafe
+#   (shared scratch-directory contention); use --tap only with a
+#   single-threaded runtests for that model.
 
 set -eu
 
 DIR="."
 EXTRA_FLAGS=""
 SELECTED=""
+TAP=0
 
 usage() {
-    sed -n '4,26p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,35p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -42,6 +58,7 @@ while [ $# -gt 0 ]; do
         -d*) DIR="${1#-d}"; shift;;
         -s) EXTRA_FLAGS="$EXTRA_FLAGS -s"; shift;;
         -t) EXTRA_FLAGS="$EXTRA_FLAGS -t"; shift;;
+        --tap) TAP=1; shift;;
         -h|--help) usage; exit 0;;
         --) shift; SELECTED="$SELECTED $*"; break;;
         -*) echo "runtests: unknown option $1" >&2; exit 2;;
@@ -72,7 +89,9 @@ missing=0
 bugs=0
 worst=0
 
-run_one() {
+# --- human-readable mode --------------------------------------------------
+
+run_one_human() {
     t=$1
     bin="$HERE/$t"
     if [ ! -x "$bin" ]; then
@@ -86,27 +105,105 @@ run_one() {
     rc=$?
     set -e
     case $rc in
+        0)  passed=$((passed + 1));;
+        77) skipped=$((skipped + 1));;
+        1)  failed=$((failed + 1))
+            if [ $worst -lt 1 ]; then worst=1; fi;;
+        *)  bugs=$((bugs + 1))
+            printf '%-16s exited %d (bug)\n' "$t" "$rc"
+            if [ $worst -lt 99 ]; then worst=99; fi;;
+    esac
+}
+
+# --- TAP13 aggregate mode -------------------------------------------------
+#
+# Each test binary is one TAP test.  We run it in its default (non-TAP)
+# mode and capture stdout to a temp file so the child's "TEST:/PASS:/..."
+# lines can be re-emitted as "#" diagnostics -- keeping the overall
+# stream parseable by prove.  A first "SKIP:" line in the captured
+# output marks the test as skipped; the rest is diagnostic.
+#
+# The per-test index is emitted as a TAP comment so bisecting failures
+# is straightforward even without prove.
+
+emit_tap_diag() {
+    # Prefix each captured line with "# "; swallow empty lines.
+    while IFS= read -r line; do
+        printf '# %s\n' "$line"
+    done < "$1"
+}
+
+first_skip_reason() {
+    # Returns the first "SKIP: <reason>" line's reason, or empty string.
+    sed -n 's/^SKIP: //p' "$1" | head -n 1
+}
+
+run_one_tap() {
+    t=$1
+    idx=$2
+    bin="$HERE/$t"
+    if [ ! -x "$bin" ]; then
+        printf 'not ok %d - %s # MISS binary not built\n' "$idx" "$t"
+        missing=$((missing + 1))
+        if [ $worst -lt 98 ]; then worst=98; fi
+        return
+    fi
+    tmp=$(mktemp 2>/dev/null || mktemp -t runtests.XXXXXX)
+    set +e
+    "$bin" -d "$DIR" $EXTRA_FLAGS > "$tmp" 2>&1
+    rc=$?
+    set -e
+    case $rc in
         0)
+            printf 'ok %d - %s\n' "$idx" "$t"
+            emit_tap_diag "$tmp"
             passed=$((passed + 1))
             ;;
         77)
+            reason=$(first_skip_reason "$tmp")
+            [ -n "$reason" ] || reason="skipped"
+            printf 'ok %d - %s # SKIP %s\n' "$idx" "$t" "$reason"
+            emit_tap_diag "$tmp"
             skipped=$((skipped + 1))
             ;;
         1)
+            printf 'not ok %d - %s\n' "$idx" "$t"
+            emit_tap_diag "$tmp"
             failed=$((failed + 1))
             if [ $worst -lt 1 ]; then worst=1; fi
             ;;
         *)
+            printf 'not ok %d - %s # BUG exited %d\n' "$idx" "$t" "$rc"
+            emit_tap_diag "$tmp"
             bugs=$((bugs + 1))
-            printf '%-16s exited %d (bug)\n' "$t" "$rc"
             if [ $worst -lt 99 ]; then worst=99; fi
             ;;
     esac
+    rm -f "$tmp"
 }
 
+# --- driver ---------------------------------------------------------------
+
+if [ "$TAP" = 1 ]; then
+    # Count selected tests to emit the TAP plan up front.
+    n=0
+    for t in $SELECTED; do n=$((n + 1)); done
+    printf 'TAP version 13\n1..%d\n' "$n"
+    printf '# nfsv42-tests under %s\n' "$DIR"
+    i=0
+    for t in $SELECTED; do
+        i=$((i + 1))
+        run_one_tap "$t" "$i"
+    done
+    printf '# summary: %d passed, %d failed, %d skipped, %d missing, %d bugs\n' \
+        "$passed" "$failed" "$skipped" "$missing" "$bugs"
+    exit "$worst"
+fi
+
+# Default: human-readable.
 printf '\n=== nfsv42-tests under %s ===\n\n' "$DIR"
 for t in $SELECTED; do
-    run_one "$t"
+    run_one_human "$t"
 done
 printf '\nsummary: %d passed, %d failed, %d skipped, %d missing, %d bugs\n' \
     "$passed" "$failed" "$skipped" "$missing" "$bugs"

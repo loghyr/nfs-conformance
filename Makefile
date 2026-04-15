@@ -72,6 +72,19 @@ clean:
 check: all
 	./runtests -d $(CHECK_DIR)
 
+# Emit TAP13 aggregate output; pipe to prove or tappy for structured
+# reporting.  Sequential (same -d mount) by design.
+check-tap: all
+	./runtests --tap -d $(CHECK_DIR)
+
+# Parallel runs via prove.  Assumes prove is installed and the caller
+# has enough independent -d mounts that tests do not collide on scratch
+# files; see runtests header for the single-mount caveat.
+# Override JOBS on the command line: `make check-prove JOBS=4`.
+JOBS ?= 4
+check-prove: all
+	NFSV42_TESTS_TAP=1 prove -j $(JOBS) -e '' ./op_*
+
 install: all
 	install -d $(DESTDIR)$(libexecdir)/nfsv42-tests
 	install -m 755 $(TESTS) $(PROBES) runtests \

@@ -136,6 +136,38 @@ sudo mount -t nfs -o vers=4.2 server:/export /mnt/nfs42
 make check CHECK_DIR=/mnt/nfs42
 ```
 
+## TAP13 output
+
+Every test binary and `runtests` itself can emit TAP13 (Test Anything
+Protocol), so results are consumable by `prove`, `tappy`, and any CI
+system that speaks TAP.
+
+Three entry points:
+
+```
+# Aggregated meta-TAP, sequential, no external deps:
+./runtests --tap -d /mnt/nfs42
+# Equivalent:
+make check-tap CHECK_DIR=/mnt/nfs42
+
+# Parallel runs via prove (one binary per slot).  Each binary emits
+# its own "1..1" TAP stream via the NFSV42_TESTS_TAP environment
+# variable; prove aggregates across binaries.  Only safe when
+# separate -d mounts are passed per binary -- parallel runs against
+# the SAME mount collide on scratch filenames:
+NFSV42_TESTS_TAP=1 prove -j $(nproc) -e '' ./op_*
+# Equivalent:
+make check-prove JOBS=$(nproc)
+
+# Single binary, raw TAP (useful for scripting):
+NFSV42_TESTS_TAP=1 ./op_commit -d /mnt/nfs42
+```
+
+Each binary in TAP mode is one test: one `1..1` plan line plus one
+`ok`/`not ok`/`# SKIP` result.  Case-level granularity (one result per
+`case_foo`) is a planned refinement; keeping the harness change small
+kept Phase 1 to one subr.c edit.
+
 ## Interpreting environmental NOTEs
 
 In the Connectathon tradition, mount options and server configuration are

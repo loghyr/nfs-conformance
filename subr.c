@@ -13,6 +13,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -32,41 +33,112 @@ static int test_failed;
  */
 extern int Sflag;
 
+/*
+ * TAP13 output mode.
+ *
+ * Enabled when the environment variable NFSV42_TESTS_TAP is set to a
+ * non-empty, non-"0" value.  In TAP mode each test binary emits a
+ * self-contained TAP stream:
+ *
+ *   1..1
+ *   # TEST: name: purpose            (from prelude())
+ *   # FAIL: reason                   (from each complain())
+ *   ok 1 - name                      (from finish(), no complain() fired)
+ *   not ok 1 - name                  (from finish(), complain() did fire)
+ *   ok 1 - name # SKIP reason        (from skip())
+ *   Bail out! reason                 (from bail())
+ *
+ * Each binary is one TAP test; per-case granularity is left as a future
+ * refinement.  This mapping means `prove -j N ./op_*` works directly
+ * and parallelism comes from prove, not from the harness.
+ *
+ * Non-TAP mode is unchanged so existing runtests parsing and human
+ * readers see the same "TEST/PASS/FAIL/SKIP" lines as before.
+ */
+static int tap_mode(void)
+{
+	static int cached = -1;
+	if (cached == -1) {
+		const char *e = getenv("NFSV42_TESTS_TAP");
+		cached = (e && *e && !(e[0] == '0' && e[1] == '\0')) ? 1 : 0;
+	}
+	return cached;
+}
+
+/*
+ * Name captured from prelude() so skip() can emit a TAP description
+ * without each skip() caller having to thread the name through.
+ */
+static const char *tap_name = "test";
+
 void complain(const char *fmt, ...)
 {
 	va_list ap;
-	fprintf(stderr, "FAIL: ");
-	va_start(ap, fmt);
-	vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	fprintf(stderr, "\n");
+	if (tap_mode()) {
+		printf("# FAIL: ");
+		va_start(ap, fmt);
+		vprintf(fmt, ap);
+		va_end(ap);
+		printf("\n");
+		fflush(stdout);
+	} else {
+		fprintf(stderr, "FAIL: ");
+		va_start(ap, fmt);
+		vfprintf(stderr, fmt, ap);
+		va_end(ap);
+		fprintf(stderr, "\n");
+	}
 	test_failed = 1;
 }
 
 void bail(const char *fmt, ...)
 {
 	va_list ap;
-	fprintf(stderr, "FAIL: ");
-	va_start(ap, fmt);
-	vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	fprintf(stderr, "\n");
+	if (tap_mode()) {
+		printf("Bail out! ");
+		va_start(ap, fmt);
+		vprintf(fmt, ap);
+		va_end(ap);
+		printf("\n");
+		fflush(stdout);
+	} else {
+		fprintf(stderr, "FAIL: ");
+		va_start(ap, fmt);
+		vfprintf(stderr, fmt, ap);
+		va_end(ap);
+		fprintf(stderr, "\n");
+	}
 	exit(TEST_FAIL);
 }
 
 void skip(const char *fmt, ...)
 {
 	va_list ap;
-	fprintf(stdout, "SKIP: ");
-	va_start(ap, fmt);
-	vfprintf(stdout, fmt, ap);
-	va_end(ap);
-	fprintf(stdout, "\n");
+	if (tap_mode()) {
+		printf("1..1\nok 1 - %s # SKIP ", tap_name);
+		va_start(ap, fmt);
+		vprintf(fmt, ap);
+		va_end(ap);
+		printf("\n");
+		fflush(stdout);
+	} else {
+		fprintf(stdout, "SKIP: ");
+		va_start(ap, fmt);
+		vfprintf(stdout, fmt, ap);
+		va_end(ap);
+		fprintf(stdout, "\n");
+	}
 	exit(TEST_SKIP);
 }
 
 int finish(const char *testname)
 {
+	if (tap_mode()) {
+		printf("1..1\n%s 1 - %s\n",
+		       test_failed ? "not ok" : "ok", testname);
+		fflush(stdout);
+		return test_failed ? TEST_FAIL : TEST_PASS;
+	}
 	if (test_failed)
 		return TEST_FAIL;
 	if (!Sflag)
@@ -76,8 +148,13 @@ int finish(const char *testname)
 
 void prelude(const char *testname, const char *purpose)
 {
-	if (!Sflag)
+	tap_name = testname;
+	if (tap_mode()) {
+		printf("# TEST: %s: %s\n", testname, purpose);
+		fflush(stdout);
+	} else if (!Sflag) {
 		printf("TEST: %s: %s\n", testname, purpose);
+	}
 }
 
 void cd_or_skip(const char *testname, const char *dir, int nflag)
