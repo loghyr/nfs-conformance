@@ -98,13 +98,19 @@ done
 # doc/group-names.txt.  Register the cthon26 group so `make` succeeds
 # and `./check -g cthon26` works.
 GROUP_DOC="$DEST/doc/group-names.txt"
-if [ -f "$GROUP_DOC" ] && ! grep -q '^cthon26[[:space:]]' "$GROUP_DOC"; then
-    if [ $DRY -eq 1 ]; then
+if [ -f "$GROUP_DOC" ]; then
+    if grep -q '^cthon26[[:space:]]' "$GROUP_DOC"; then
+        :
+    elif [ $DRY -eq 1 ]; then
         echo "would register: cthon26 group in $GROUP_DOC"
     else
         printf 'cthon26\tcthon26 NFS conformance wrappers (out-of-tree)\n' \
             >> "$GROUP_DOC"
     fi
+else
+    echo "install.sh: warning: $GROUP_DOC not present;" \
+         "skipping cthon26 group registration -- \`make\` in" \
+         "xfstests will fail until the group is registered manually" >&2
 fi
 
 if [ $DRY -eq 0 ]; then
