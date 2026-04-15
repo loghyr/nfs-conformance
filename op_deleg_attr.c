@@ -1,0 +1,473 @@
+/* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/*
+ * op_deleg_attr.c -- probe NFSv4 attribute tracking under open files
+ * and write delegations (RFC 7530 S18.7 GETATTR / S20.1 CB_GETATTR).
+ *
+ * Background: WRITE delegation
+ * ----------------------------
+ * When a client holds a WRITE delegation the server transfers attribute
+ * authority for `size` and `change` to the delegating client.  If a
+ * second client asks the server "what is the current size of file F?"
+ * the server must issue a CB_GETATTR callback to the delegating client
+ * to retrieve the authoritative values before answering.  If CB_GETATTR
+ * is broken the second client receives stale (pre-delegation) attributes.
+ *
+ * What this test verifies
+ * -----------------------
+ * The test exercises the client-side attribute tracking that CB_GETATTR
+ * depends on.  All cases are single-client (one NFS mount), so CB_GETATTR
+ * itself is not triggered.  To observe CB_GETATTR:
+ *
+ *   1. Run this binary with -d /mnt/nfs on client A.
+ *   2. While a case holds a file open, run `stat <file>` from client B
+ *      on the same server/export.
+ *   3. Use tcpdump/wireshark (port 2049, filter "nfs and rpc.program==1")
+ *      on the server to see the CB_GETATTR compound on the callback
+ *      channel, followed by the GETATTR reply from client A.
+ *
+ * Cases:
+ *
+ *   1. fstat / stat size agreement after pwrite.  Open O_RDWR, pwrite
+ *      8 KiB, verify fstat(fd).st_size == stat(path).st_size == 8192.
+ *      Exercises that the client attribute cache is updated on write
+ *      and that both query paths return consistent values.
+ *
+ *   2. Incremental size tracking.  pwrite 1 KiB, stat → 1024; pwrite
+ *      another 1 KiB at offset 1024, stat → 2048.  Tests that size
+ *      is updated monotonically with each write while the file is open.
+ *
+ *   3. Fork: child stat after parent pwrite.  fork(), parent pwrite
+ *      4 KiB, signal child via pipe, child stat(path) → 4096.  On a
+ *      single NFS client both processes share the VFS attribute cache,
+ *      so this exercises the same client-side attribute update path
+ *      that CB_GETATTR queries on a multi-client deployment.
+ *
+ *   4. ftruncate attribute update.  pwrite 4 KiB, ftruncate(fd, 0),
+ *      fstat → 0, stat(path) → 0.  Tests that a truncation through
+ *      the delegated fd is reflected in both stat paths immediately.
+ *
+ *   5. Delegation return on close.  pwrite a known pattern, close()
+ *      (which returns the delegation to the server), reopen O_RDONLY,
+ *      pread and verify pattern.  Tests that data written under
+ *      delegation is committed to the server on delegation return.
+ *
+ *   6. lseek(SEEK_END) vs stat size agreement.  pwrite 4 KiB, compare
+ *      lseek(fd, 0, SEEK_END) to stat(path).st_size.  Both should
+ *      return 4096; a mismatch indicates the client's in-kernel size
+ *      tracking diverged from the attribute cache.
+ *
+ * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "tests.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+
+int Hflag = 0;
+int Sflag = 0;
+int Tflag = 0;
+int Fflag = 0;
+int Nflag = 0;
+
+static const char *myname = "op_deleg_attr";
+
+static void usage(void)
+{
+	fprintf(stderr,
+		"usage: %s [-hstfn] [-d DIR]\n"
+		"  probe NFSv4 attribute tracking under write delegations\n"
+		"  (RFC 7530 S18.7 GETATTR / S20.1 CB_GETATTR)\n"
+		"  -h help  -s silent  -t timing  -f function-only\n"
+		"  -n no mkdir  -d DIR  (default cwd)\n",
+		myname);
+}
+
+/* case 1 ---------------------------------------------------------------- */
+
+static void case_fstat_stat_agree(void)
+{
+	char f[64];
+	snprintf(f, sizeof(f), "t_da.fs.%ld", (long)getpid());
+	unlink(f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case1: open: %s", strerror(errno));
+		return;
+	}
+
+	unsigned char buf[8192];
+	fill_pattern(buf, sizeof(buf), 1);
+	if (pwrite_all(fd, buf, sizeof(buf), 0, "case1: pwrite") != 0) {
+		close(fd); unlink(f); return;
+	}
+
+	struct stat fst, pst;
+	if (fstat(fd, &fst) != 0) {
+		complain("case1: fstat: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+	if (stat(f, &pst) != 0) {
+		complain("case1: stat: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+
+	if (fst.st_size != 8192)
+		complain("case1: fstat size %lld != 8192",
+			 (long long)fst.st_size);
+	if (pst.st_size != 8192)
+		complain("case1: stat size %lld != 8192",
+			 (long long)pst.st_size);
+	if (fst.st_size != pst.st_size)
+		complain("case1: fstat size %lld != stat size %lld "
+			 "(attribute cache / delegation size mismatch)",
+			 (long long)fst.st_size, (long long)pst.st_size);
+
+	close(fd);
+	unlink(f);
+}
+
+/* case 2 ---------------------------------------------------------------- */
+
+static void case_incremental_size(void)
+{
+	char f[64];
+	snprintf(f, sizeof(f), "t_da.is.%ld", (long)getpid());
+	unlink(f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case2: open: %s", strerror(errno));
+		return;
+	}
+
+	unsigned char chunk[1024];
+	fill_pattern(chunk, sizeof(chunk), 2);
+
+	/* First write: 1 KiB at offset 0. */
+	if (pwrite_all(fd, chunk, sizeof(chunk), 0, "case2: write1") != 0) {
+		close(fd); unlink(f); return;
+	}
+	struct stat st;
+	if (stat(f, &st) != 0) {
+		complain("case2: stat after write1: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+	if (st.st_size != 1024)
+		complain("case2: after write1, stat size %lld != 1024",
+			 (long long)st.st_size);
+
+	/* Second write: 1 KiB at offset 1024. */
+	fill_pattern(chunk, sizeof(chunk), 3);
+	if (pwrite_all(fd, chunk, sizeof(chunk), 1024, "case2: write2") != 0) {
+		close(fd); unlink(f); return;
+	}
+	if (stat(f, &st) != 0) {
+		complain("case2: stat after write2: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+	if (st.st_size != 2048)
+		complain("case2: after write2, stat size %lld != 2048",
+			 (long long)st.st_size);
+
+	close(fd);
+	unlink(f);
+}
+
+/* case 3 ---------------------------------------------------------------- */
+
+static void case_fork_child_stat(void)
+{
+	char f[64];
+	snprintf(f, sizeof(f), "t_da.fk.%ld", (long)getpid());
+	unlink(f);
+
+	int pfd[2];
+	if (pipe(pfd) != 0) {
+		complain("case3: pipe: %s", strerror(errno));
+		return;
+	}
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case3: open: %s", strerror(errno));
+		close(pfd[0]); close(pfd[1]);
+		return;
+	}
+
+	pid_t pid = fork();
+	if (pid < 0) {
+		complain("case3: fork: %s", strerror(errno));
+		close(fd);
+		close(pfd[0]); close(pfd[1]);
+		unlink(f);
+		return;
+	}
+
+	if (pid == 0) {
+		/* ---- Child ---- */
+		close(pfd[1]);
+		close(fd);
+
+		char ready;
+		ssize_t n = read(pfd[0], &ready, 1);
+		close(pfd[0]);
+		if (n != 1 || ready != 'S')
+			_exit(0); /* parent had an error; it already complained */
+
+		struct stat st;
+		if (stat(f, &st) != 0) {
+			fprintf(stderr, "FAIL: case3: child stat: %s\n",
+				strerror(errno));
+			_exit(1);
+		}
+		if (st.st_size != 4096) {
+			fprintf(stderr,
+				"FAIL: case3: child stat size %lld != 4096 "
+				"(attr not visible from second process "
+				"while parent holds delegation)\n",
+				(long long)st.st_size);
+			_exit(1);
+		}
+		_exit(0);
+	}
+
+	/* ---- Parent ---- */
+	close(pfd[0]);
+
+	unsigned char buf[4096];
+	fill_pattern(buf, sizeof(buf), 77);
+
+	char sig;
+	if (pwrite_all(fd, buf, sizeof(buf), 0, "case3: pwrite") != 0) {
+		sig = 'F'; /* write failed; complain already called */
+	} else {
+		sig = 'S';
+	}
+	write(pfd[1], &sig, 1);
+	close(pfd[1]);
+
+	int status = 0;
+	waitpid(pid, &status, 0);
+	if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+		complain("case3: child saw stale size after parent pwrite "
+			 "(delegation attribute cache not updated)");
+
+	close(fd);
+	unlink(f);
+}
+
+/* case 4 ---------------------------------------------------------------- */
+
+static void case_ftruncate_attr(void)
+{
+	char f[64];
+	snprintf(f, sizeof(f), "t_da.tr.%ld", (long)getpid());
+	unlink(f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case4: open: %s", strerror(errno));
+		return;
+	}
+
+	unsigned char buf[4096];
+	fill_pattern(buf, sizeof(buf), 4);
+	if (pwrite_all(fd, buf, sizeof(buf), 0, "case4: pwrite") != 0) {
+		close(fd); unlink(f); return;
+	}
+
+	if (ftruncate(fd, 0) != 0) {
+		complain("case4: ftruncate(0): %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+
+	struct stat fst, pst;
+	if (fstat(fd, &fst) != 0) {
+		complain("case4: fstat after truncate: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+	if (stat(f, &pst) != 0) {
+		complain("case4: stat after truncate: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+
+	if (fst.st_size != 0)
+		complain("case4: fstat size %lld after ftruncate(0) "
+			 "(expected 0)",
+			 (long long)fst.st_size);
+	if (pst.st_size != 0)
+		complain("case4: stat size %lld after ftruncate(0) "
+			 "(expected 0)",
+			 (long long)pst.st_size);
+
+	close(fd);
+	unlink(f);
+}
+
+/* case 5 ---------------------------------------------------------------- */
+
+static void case_close_reopen(void)
+{
+	char f[64];
+	snprintf(f, sizeof(f), "t_da.cr.%ld", (long)getpid());
+	unlink(f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case5: open: %s", strerror(errno));
+		return;
+	}
+
+	unsigned char wbuf[512];
+	fill_pattern(wbuf, sizeof(wbuf), 5);
+	if (pwrite_all(fd, wbuf, sizeof(wbuf), 0, "case5: pwrite") != 0) {
+		close(fd); unlink(f); return;
+	}
+
+	/*
+	 * close() causes the client to return the write delegation to the
+	 * server.  The server must see the committed data after this point.
+	 */
+	close(fd);
+
+	fd = open(f, O_RDONLY);
+	if (fd < 0) {
+		complain("case5: reopen O_RDONLY: %s", strerror(errno));
+		unlink(f);
+		return;
+	}
+
+	struct stat st;
+	if (fstat(fd, &st) != 0) {
+		complain("case5: fstat after reopen: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+	if (st.st_size != 512)
+		complain("case5: size after delegation return: %lld != 512",
+			 (long long)st.st_size);
+
+	unsigned char rbuf[512];
+	if (pread_all(fd, rbuf, sizeof(rbuf), 0, "case5: pread") != 0) {
+		close(fd); unlink(f); return;
+	}
+
+	size_t off = check_pattern(rbuf, sizeof(rbuf), 5);
+	if (off != 0)
+		complain("case5: data mismatch at byte %zu after delegation "
+			 "return (close did not commit data to server)",
+			 off - 1);
+
+	close(fd);
+	unlink(f);
+}
+
+/* case 6 ---------------------------------------------------------------- */
+
+static void case_seek_end_vs_stat(void)
+{
+	char f[64];
+	snprintf(f, sizeof(f), "t_da.se.%ld", (long)getpid());
+	unlink(f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case6: open: %s", strerror(errno));
+		return;
+	}
+
+	unsigned char buf[4096];
+	fill_pattern(buf, sizeof(buf), 6);
+	if (pwrite_all(fd, buf, sizeof(buf), 0, "case6: pwrite") != 0) {
+		close(fd); unlink(f); return;
+	}
+
+	off_t end = lseek(fd, 0, SEEK_END);
+	if (end < 0) {
+		complain("case6: lseek(SEEK_END): %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+	if (end != 4096)
+		complain("case6: lseek(SEEK_END) returned %lld (expected 4096)",
+			 (long long)end);
+
+	struct stat st;
+	if (stat(f, &st) != 0) {
+		complain("case6: stat: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+	if (st.st_size != 4096)
+		complain("case6: stat size %lld (expected 4096)",
+			 (long long)st.st_size);
+	if (end != st.st_size)
+		complain("case6: lseek(SEEK_END) %lld != stat size %lld "
+			 "(client in-kernel size diverged from attribute cache)",
+			 (long long)end, (long long)st.st_size);
+
+	close(fd);
+	unlink(f);
+}
+
+/* main ------------------------------------------------------------------ */
+
+int main(int argc, char **argv)
+{
+	const char *dir = ".";
+	struct timespec t0, t1;
+
+	while (--argc > 0 && argv[1][0] == '-') {
+		argv++;
+		for (const char *p = &argv[0][1]; *p; p++) {
+			switch (*p) {
+			case 'h': Hflag = 1; break;
+			case 's': Sflag = 1; break;
+			case 't': Tflag = 1; break;
+			case 'f': Fflag = 1; break;
+			case 'n': Nflag = 1; break;
+			case 'd':
+				if (argc < 2) { usage(); return TEST_FAIL; }
+				dir = argv[1];
+				argv++;
+				argc--;
+				goto next;
+			default: usage(); return TEST_FAIL;
+			}
+		}
+next:
+		;
+	}
+	if (Hflag) { usage(); return TEST_PASS; }
+
+	prelude(myname,
+		"NFSv4 attribute tracking under write delegation "
+		"(RFC 7530 S18.7/S20.1)");
+	cd_or_skip(myname, dir, Nflag);
+
+	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
+
+	case_fstat_stat_agree();
+	case_incremental_size();
+	case_fork_child_stat();
+	case_ftruncate_attr();
+	case_close_reopen();
+	case_seek_end_vs_stat();
+
+	if (Tflag) {
+		clock_gettime(CLOCK_MONOTONIC, &t1);
+		double ms = (t1.tv_sec - t0.tv_sec) * 1e3
+			    + (t1.tv_nsec - t0.tv_nsec) / 1e6;
+		printf("TIME: %s: %.1f ms\n", myname, ms);
+	}
+
+	return finish(myname);
+}

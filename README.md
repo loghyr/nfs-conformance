@@ -60,6 +60,7 @@ Bread-and-butter NFSv4 ops that predate v4.1 but matter for every server.  Cthon
 | `op_readdir` | READDIR (RFC 7530 §18.23) | `opendir(3)`, `readdir(3)`, `rewinddir(3)` | POSIX |
 | `op_open_excl` | OPEN createmode=EXCLUSIVE4_1 (RFC 7530 §18.16) | `open(O_CREAT\|O_EXCL)`, `openat` | POSIX |
 | `op_mknod_fifo` | CREATE(NF4FIFO) (RFC 7530 §18.4) | `mkfifo(3)` | POSIX |
+| `op_deleg_attr` | GETATTR / CB_GETATTR attribute delegation (RFC 7530 §18.7 / §20.1) | `fstat(2)`, `stat(2)`, `ftruncate(2)`, `lseek(SEEK_END)` | POSIX |
 
 ## Non-goals (deferred)
 

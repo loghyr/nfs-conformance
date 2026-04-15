@@ -19,6 +19,7 @@ op_rmdir
 op_readdir
 op_open_excl
 op_mknod_fifo
+op_deleg_attr
 *.o
 *.dSYM/
 
