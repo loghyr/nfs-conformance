@@ -233,7 +233,8 @@ static void case_fork_child_stat(void)
 		close(fd);
 
 		char ready;
-		ssize_t n = read(pfd[0], &ready, 1);
+		ssize_t n;
+		do { n = read(pfd[0], &ready, 1); } while (n < 0 && errno == EINTR);
 		close(pfd[0]);
 		if (n != 1 || ready != 'S')
 			_exit(0); /* parent had an error; it already complained */
@@ -267,7 +268,10 @@ static void case_fork_child_stat(void)
 	} else {
 		sig = 'S';
 	}
-	write(pfd[1], &sig, 1);
+	ssize_t wr;
+	do { wr = write(pfd[1], &sig, 1); } while (wr < 0 && errno == EINTR);
+	if (wr < 0)
+		bail("case3: write to child pipe: %s", strerror(errno));
 	close(pfd[1]);
 
 	int status = 0;
@@ -352,7 +356,10 @@ static void case_close_reopen(void)
 	 * close() causes the client to return the write delegation to the
 	 * server.  The server must see the committed data after this point.
 	 */
-	close(fd);
+	if (close(fd) < 0) {
+		complain("case5: close (delegation return): %s", strerror(errno));
+		unlink(f); return;
+	}
 
 	fd = open(f, O_RDONLY);
 	if (fd < 0) {
@@ -446,10 +453,16 @@ static void case_cb_getattr(const char *server, const char *nfs_dir)
 	 * test directory, so the file is at "nfs_dir/filename".
 	 * If empty (mount is at export root), use just the filename.
 	 */
+	int plen;
 	if (nfs_dir && nfs_dir[0] != '\0')
-		snprintf(probe_path, sizeof(probe_path), "%s/%s", nfs_dir, f);
+		plen = snprintf(probe_path, sizeof(probe_path), "%s/%s", nfs_dir, f);
 	else
-		snprintf(probe_path, sizeof(probe_path), "%s", f);
+		plen = snprintf(probe_path, sizeof(probe_path), "%s", f);
+	if (plen < 0 || (size_t)plen >= sizeof(probe_path)) {
+		complain("case7: NFS path prefix too long (>%zu chars)",
+			 sizeof(probe_path) - 1);
+		return;
+	}
 
 	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0) {
