@@ -60,6 +60,11 @@ cb_recall_probe: cb_recall_probe.c rpc_wire.h
 # op_server_caps uses rpc_wire.h directly (in addition to the standard deps)
 op_server_caps: rpc_wire.h
 
+# op_deleg_attr uses pthreads for case 8 (thread-stat-no-callback); override
+# the pattern rule so the link line adds -pthread.
+op_deleg_attr: op_deleg_attr.c subr.o tests.h
+	$(CC) $(CFLAGS) $(LDFLAGS) -pthread $< subr.o -o $@
+
 clean:
 	rm -f $(TESTS) $(PROBES) subr.o
 	rm -rf *.dSYM

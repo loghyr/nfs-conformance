@@ -243,6 +243,43 @@ SKIP: op_rename_atomic: renameat2 RENAME_NOREPLACE not supported ...
 Needs Linux NFS client ~6.1+ for `renameat2` flag passthrough.  Older
 clients return `EINVAL` for any non-zero flag argument.
 
+### op_deleg_attr case 8: `-m` mountstats-strict mode
+
+Symptom (opt-in; only appears when `-m` is passed):
+
+```
+FAIL: case8: -m strict: GETATTR count rose by 3 during thread stat
+      (client issued wire GETATTR despite holding a delegation, OR
+       concurrent traffic bumped the counter -- -m requires a quiet mount)
+```
+
+Why: case 8 spawns a pthread that stat()s a file while the main thread
+holds a write delegation.  Because the thread shares the kernel NFS
+client, the server sees no conflicting OPEN, sends no CB_GETATTR, and
+the client answers the stat from the delegation's in-core attribute
+cache.  With `-m`, the test additionally parses
+`/proc/self/mountstats` before and after the thread's stat and
+asserts the client-side outgoing GETATTR counter did not change.
+
+The counter is per-mount, not per-test, so ANY concurrent traffic on
+the same mount (other processes, other test runs, a `find` in a
+shell, a monitoring agent) during the few-microsecond stat window
+bumps it and turns the assertion into a false positive.  `-m` is
+opt-in precisely so the tester is explicitly acknowledging that the
+mount is quiet for the duration of the test.
+
+Developers who like to run cthon-style tests in parallel: do not
+pass `-m` unless you serialise op_deleg_attr with `flock` or a
+lockfile on the mountpoint.  Without `-m` the case still runs and
+still verifies attribute correctness (the useful positive signal).
+`-m` is Linux-only (`/proc/self/mountstats`); on other platforms the
+flag is accepted but silently downgrades to lenient mode with a
+NOTE.  Invoke as:
+
+```
+./op_deleg_attr -m -d /mnt/nfs
+```
+
 ## Exit codes
 
 | Code | Meaning |

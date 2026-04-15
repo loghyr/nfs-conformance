@@ -67,8 +67,23 @@
  *      delegated size (4096).  Silently skipped if cb_getattr_probe is not
  *      in PATH (install it from nfsv42-tests alongside this binary).
  *
+ *   8. Same-client thread stat.  pthread_create a worker that does
+ *      stat(f) while the main thread holds the write delegation.  Because
+ *      the worker shares the kernel's NFS client, the server sees no
+ *      conflicting OPEN and sends no CB_GETATTR; the client answers the
+ *      stat from the delegation's in-core attribute cache.  Always
+ *      verifies attribute correctness.  With -m ("mountstats-strict"),
+ *      additionally parses /proc/self/mountstats to assert that no wire
+ *      GETATTR was sent for the mount during the thread's stat -- the
+ *      observable proxy for "no CB_GETATTR could have fired."  -m is
+ *      Linux-only and requires a quiet mount: concurrent traffic from
+ *      other users, test runs, or monitoring agents bumps the GETATTR
+ *      counter and produces a false positive, so -m is opt-in.
+ *
  * Portable: POSIX across Linux / FreeBSD / macOS / Solaris (cases 1-6).
- * Case 7 requires a Linux/Unix NFS server on port 2049 (TCP).
+ * Case 7 requires a Linux/Unix NFS server on port 2049 (TCP).  Case 8's
+ * attribute-correctness assertion is POSIX; its -m strict mountstats
+ * assertion is Linux-only.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -77,6 +92,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -89,17 +107,22 @@ int Sflag = 0;
 int Tflag = 0;
 int Fflag = 0;
 int Nflag = 0;
+static int Mflag = 0;	/* -m: enable mountstats-strict assertion in case 8 */
 
 static const char *myname = "op_deleg_attr";
 
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: %s [-hstfn] [-d DIR] [-S SERVER] [-P NFSPATH_PREFIX]\n"
+		"usage: %s [-hstfnm] [-d DIR] [-S SERVER] [-P NFSPATH_PREFIX]\n"
 		"  probe NFSv4 attribute tracking under write delegations\n"
 		"  (RFC 7530 S18.7 GETATTR / S20.1 CB_GETATTR)\n"
 		"  -h help  -s silent  -t timing  -f function-only\n"
 		"  -n no mkdir  -d DIR  (default cwd)\n"
+		"  -m case 8 strict: assert no wire GETATTR during thread stat\n"
+		"     (Linux only; requires a QUIET mount -- concurrent test\n"
+		"     runs or background traffic on the same mount produce\n"
+		"     false positives; opt-in acknowledgement of that risk)\n"
 		"  -S SERVER          enable case 7: NFS server for CB_GETATTR probe\n"
 		"  -P NFSPATH_PREFIX  export-relative prefix to test dir (default \"\")\n",
 		myname);
@@ -554,6 +577,179 @@ static void case_cb_getattr(const char *server, const char *nfs_dir)
 	unlink(f);
 }
 
+/* case 8 ---------------------------------------------------------------- */
+
+/*
+ * read_mount_getattr_count -- return the outgoing GETATTR RPC count for
+ * the NFS mount whose mountpoint path is `dir`.  Parses Linux
+ * /proc/self/mountstats.  The format (per Documentation/filesystems/nfs/
+ * and nfs-utils source) has a "device ... mounted on <path>" line, then
+ * after "per-op statistics" a line per op: "NAME: c1 c2 c3 ... c8" where
+ * c1 is the "bind count" (outgoing RPC count).
+ *
+ * Returns 0 on success with *count filled, -1 on any error (file
+ * missing, parse failure, mount not found).  Non-fatal -- caller treats
+ * -1 as "mountstats unavailable; skip strict check."
+ *
+ * Linux only.  Non-Linux builds return -1 unconditionally.
+ */
+static int read_mount_getattr_count(const char *dir, unsigned long long *count)
+{
+#ifdef __linux__
+	FILE *fp = fopen("/proc/self/mountstats", "r");
+	if (!fp)
+		return -1;
+
+	/*
+	 * Resolve `dir` to an absolute path so we match mountstats' "mounted
+	 * on <abs>" line regardless of how the caller spelled -d.
+	 */
+	char abs_dir[PATH_MAX];
+	if (!realpath(dir, abs_dir)) {
+		fclose(fp);
+		return -1;
+	}
+
+	char line[1024];
+	int in_target_mount = 0;
+	int in_per_op = 0;
+	int found = -1;
+
+	while (fgets(line, sizeof(line), fp)) {
+		if (strncmp(line, "device ", 7) == 0) {
+			/* Format: "device X mounted on Y with fstype Z..." */
+			in_target_mount = 0;
+			in_per_op = 0;
+			const char *m = strstr(line, " mounted on ");
+			if (!m)
+				continue;
+			m += strlen(" mounted on ");
+			/* Copy mountpoint up to the next " " or end of line */
+			char mp[PATH_MAX];
+			size_t i = 0;
+			while (*m && *m != ' ' && *m != '\n' &&
+			       i + 1 < sizeof(mp))
+				mp[i++] = *m++;
+			mp[i] = '\0';
+			if (strcmp(mp, abs_dir) == 0)
+				in_target_mount = 1;
+			continue;
+		}
+		if (!in_target_mount)
+			continue;
+		if (strstr(line, "per-op statistics")) {
+			in_per_op = 1;
+			continue;
+		}
+		if (in_per_op && strncmp(line, "\tGETATTR:", 9) == 0) {
+			unsigned long long c = 0;
+			if (sscanf(line + 9, " %llu", &c) == 1) {
+				*count = c;
+				found = 0;
+			}
+			break;
+		}
+	}
+
+	fclose(fp);
+	return found;
+#else
+	(void)dir;
+	(void)count;
+	return -1;
+#endif
+}
+
+struct thread_stat_args {
+	const char *path;
+	off_t observed_size;
+	int rc;
+	int err;
+};
+
+static void *thread_stat_fn(void *arg)
+{
+	struct thread_stat_args *a = (struct thread_stat_args *)arg;
+	struct stat st;
+	if (stat(a->path, &st) != 0) {
+		a->rc = -1;
+		a->err = errno;
+	} else {
+		a->rc = 0;
+		a->observed_size = st.st_size;
+	}
+	return NULL;
+}
+
+static void case_thread_stat_no_callback(const char *dir)
+{
+	char f[64];
+	snprintf(f, sizeof(f), "t_da.th.%ld", (long)getpid());
+	unlink(f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case8: open: %s", strerror(errno));
+		return;
+	}
+
+	unsigned char buf[4096];
+	fill_pattern(buf, sizeof(buf), 8);
+	if (pwrite_all(fd, buf, sizeof(buf), 0, "case8: pwrite") != 0) {
+		close(fd); unlink(f); return;
+	}
+
+	/* Snapshot for strict assertion.  On non-Linux or if the mount
+	 * is not in /proc/self/mountstats, have_before stays -1 and we
+	 * silently fall back to lenient mode. */
+	unsigned long long ga_before = 0, ga_after = 0;
+	int have_before = -1, have_after = -1;
+	if (Mflag)
+		have_before = read_mount_getattr_count(dir, &ga_before);
+
+	struct thread_stat_args arg = { .path = f, .observed_size = -1,
+					.rc = 0, .err = 0 };
+	pthread_t tid;
+	int pr = pthread_create(&tid, NULL, thread_stat_fn, &arg);
+	if (pr != 0) {
+		complain("case8: pthread_create: %s", strerror(pr));
+		close(fd); unlink(f); return;
+	}
+	pthread_join(tid, NULL);
+
+	if (arg.rc != 0) {
+		complain("case8: thread stat(%s): %s", f, strerror(arg.err));
+		close(fd); unlink(f); return;
+	}
+	if (arg.observed_size != 4096)
+		complain("case8: thread saw size %lld != 4096 "
+			 "(delegation attr cache did not reflect the write)",
+			 (long long)arg.observed_size);
+
+	if (Mflag)
+		have_after = read_mount_getattr_count(dir, &ga_after);
+
+	if (Mflag) {
+		if (have_before < 0 || have_after < 0) {
+			if (!Sflag)
+				printf("NOTE: %s: case8 -m: /proc/self/mountstats "
+				       "unavailable for %s; strict assertion "
+				       "skipped\n",
+				       myname, dir);
+		} else if (ga_after != ga_before) {
+			complain("case8: -m strict: GETATTR count rose by "
+				 "%llu during thread stat "
+				 "(client issued wire GETATTR despite holding "
+				 "a delegation, OR concurrent traffic bumped "
+				 "the counter -- -m requires a quiet mount)",
+				 ga_after - ga_before);
+		}
+	}
+
+	close(fd);
+	unlink(f);
+}
+
 /* main ------------------------------------------------------------------ */
 
 int main(int argc, char **argv)
@@ -572,6 +768,7 @@ int main(int argc, char **argv)
 			case 't': Tflag = 1; break;
 			case 'f': Fflag = 1; break;
 			case 'n': Nflag = 1; break;
+			case 'm': Mflag = 1; break;
 			case 'd':
 				if (argc < 2) { usage(); return TEST_FAIL; }
 				dir = argv[1];
@@ -611,6 +808,8 @@ next:
 
 	if (cb_server)
 		case_cb_getattr(cb_server, cb_nfsdir ? cb_nfsdir : "");
+
+	case_thread_stat_no_callback(dir);
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
