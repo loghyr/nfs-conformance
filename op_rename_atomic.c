@@ -109,14 +109,21 @@ static ssize_t read_all(const char *path, char *buf, size_t cap)
 		complain("open(%s) for read: %s", path, strerror(errno));
 		return -1;
 	}
-	ssize_t n = read(fd, buf, cap - 1);
-	close(fd);
-	if (n < 0) {
-		complain("read(%s): %s", path, strerror(errno));
-		return -1;
+	ssize_t n, total = 0;
+	while (total < (ssize_t)(cap - 1)) {
+		n = read(fd, buf + total, cap - 1 - (size_t)total);
+		if (n < 0) {
+			if (errno == EINTR) continue;
+			complain("read(%s): %s", path, strerror(errno));
+			close(fd);
+			return -1;
+		}
+		if (n == 0) break; /* EOF */
+		total += n;
 	}
-	buf[n] = '\0';
-	return n;
+	close(fd);
+	buf[total] = '\0';
+	return total;
 }
 
 /*
