@@ -30,6 +30,7 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_change_attr op_rename_atomic op_symlink op_linkat \
         op_access op_setattr op_mkdir op_rmdir \
         op_readdir op_open_excl op_mknod_fifo \
+        op_commit \
         op_deleg_attr op_deleg_recall op_server_caps
 
 # Auxiliary probe tools (not run by runtests; used by individual tests).
