@@ -1,0 +1,31 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 925
+#
+# cthon26/nfsv42-tests: op_symlink
+#
+# symlinkat/readlinkat -> NFSv4 SYMLINK/READLINK (RFC 7530 S18.22 /
+# S18.26).
+#
+. ./common/preamble
+_begin_fstest auto nfs quick
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_supported_fs nfs
+_require_test
+_require_cthon26_binary op_symlink
+
+_cthon26_run op_symlink
+
+status=0
+exit

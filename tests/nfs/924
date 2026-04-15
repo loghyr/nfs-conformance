@@ -1,0 +1,31 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 924
+#
+# cthon26/nfsv42-tests: op_statx_btime
+#
+# statx(STATX_BTIME) -> NFSv4.2 time_create (RFC 7862 S12.2).
+# Linux 4.11+ only.
+#
+. ./common/preamble
+_begin_fstest auto nfs quick
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_supported_fs nfs
+_require_test
+_require_cthon26_binary op_statx_btime
+
+_cthon26_run op_statx_btime
+
+status=0
+exit
