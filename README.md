@@ -140,7 +140,8 @@ make check CHECK_DIR=/mnt/nfs42
 
 Every test binary and `runtests` itself can emit TAP13 (Test Anything
 Protocol), so results are consumable by `prove`, `tappy`, and any CI
-system that speaks TAP.
+system that speaks TAP.  Deep-dive guide with CI examples and
+troubleshooting: [`../docs/tap.md`](../docs/tap.md).
 
 Three entry points:
 
