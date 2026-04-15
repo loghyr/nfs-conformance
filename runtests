@@ -127,7 +127,10 @@ run_one_human() {
 # is straightforward even without prove.
 
 emit_tap_diag() {
-    # Prefix each captured line with "# "; swallow empty lines.
+    # Prefix each captured line with "# " so the child's output
+    # becomes a sequence of TAP13 diagnostic comments that prove
+    # accepts without complaint.  Empty lines become "# " which is
+    # still valid TAP.
     while IFS= read -r line; do
         printf '# %s\n' "$line"
     done < "$1"

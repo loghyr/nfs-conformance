@@ -163,13 +163,23 @@ void skip(const char *fmt, ...)
 			printf("ok %d - %s # SKIP ",
 			       tap_case_num,
 			       tap_case_name[0] ? tap_case_name : tap_name);
+			va_start(ap, fmt);
+			vprintf(fmt, ap);
+			va_end(ap);
+			printf("\n");
+			/*
+			 * Emit the delayed plan before exiting.  Without
+			 * this, prove(1) flags the stream as "no plan
+			 * found" because the exit() below skips finish().
+			 */
+			printf("1..%d\n", tap_case_num);
 		} else {
 			printf("1..0 # SKIP ");
+			va_start(ap, fmt);
+			vprintf(fmt, ap);
+			va_end(ap);
+			printf("\n");
 		}
-		va_start(ap, fmt);
-		vprintf(fmt, ap);
-		va_end(ap);
-		printf("\n");
 		fflush(stdout);
 	} else {
 		fprintf(stdout, "SKIP: ");
