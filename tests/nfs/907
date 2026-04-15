@@ -12,7 +12,7 @@
 # cb_getattr_probe is in PATH; the main six cases always run.
 #
 . ./common/preamble
-_begin_fstest auto nfs
+_begin_fstest auto nfs cthon26
 
 _cleanup()
 {

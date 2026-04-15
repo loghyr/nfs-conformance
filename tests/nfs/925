@@ -10,7 +10,7 @@
 # S18.26).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick
+_begin_fstest auto nfs quick cthon26
 
 _cleanup()
 {

@@ -10,7 +10,7 @@
 # megabyte files, hence not tagged quick.
 #
 . ./common/preamble
-_begin_fstest auto nfs
+_begin_fstest auto nfs cthon26
 
 _cleanup()
 {

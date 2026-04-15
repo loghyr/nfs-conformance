@@ -9,7 +9,7 @@
 # fsync/fdatasync -> NFSv4 COMMIT (RFC 7530 S18.3).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick
+_begin_fstest auto nfs quick cthon26
 
 _cleanup()
 {

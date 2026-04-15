@@ -11,7 +11,7 @@
 # do not support user.* xattrs.
 #
 . ./common/preamble
-_begin_fstest auto nfs
+_begin_fstest auto nfs cthon26
 
 _cleanup()
 {

@@ -10,7 +10,7 @@
 # second-client recall case is skipped without -S SERVER.
 #
 . ./common/preamble
-_begin_fstest auto nfs
+_begin_fstest auto nfs cthon26
 
 _cleanup()
 {

@@ -9,7 +9,7 @@
 # mkfifo(3) -> NFSv4 CREATE(NF4FIFO) (RFC 7530 S18.4).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick
+_begin_fstest auto nfs quick cthon26
 
 _cleanup()
 {

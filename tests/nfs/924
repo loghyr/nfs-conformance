@@ -10,7 +10,7 @@
 # Linux 4.11+ only.
 #
 . ./common/preamble
-_begin_fstest auto nfs quick
+_begin_fstest auto nfs quick cthon26
 
 _cleanup()
 {

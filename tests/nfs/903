@@ -10,7 +10,7 @@
 # capable backing filesystem on the server; skips otherwise.
 #
 . ./common/preamble
-_begin_fstest auto nfs
+_begin_fstest auto nfs cthon26
 
 _cleanup()
 {

@@ -9,7 +9,7 @@
 # link/linkat -> NFSv4 LINK (RFC 7530 S18.14).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick
+_begin_fstest auto nfs quick cthon26
 
 _cleanup()
 {

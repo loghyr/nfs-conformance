@@ -10,7 +10,7 @@
 # (RFC 7530 S1.4.2).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick
+_begin_fstest auto nfs quick cthon26
 
 _cleanup()
 {

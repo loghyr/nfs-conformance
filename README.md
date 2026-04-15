@@ -81,10 +81,19 @@ export CTHON26_BIN=/path/to/cthon26/nfsv42-tests
 
 ```
 cd /path/to/xfstests
-./check -nfs nfs/900           # just op_access
-./check -nfs -g nfs            # every cthon26 wrapper in the nfs group
-./check -nfs -g auto           # auto group (excludes long/stress tests)
-./check -nfs -g nfs,quick      # fast subset
+
+# Canonical: only cthon26 wrappers, nothing else
+./check -nfs -g cthon26
+
+# Fast subset: cthon26 tests that complete in under a second
+./check -nfs -g cthon26,quick
+
+# Single wrapper by number
+./check -nfs nfs/904           # op_commit
+
+# Every NFS test in tests/nfs/, including all upstream xfstests
+# tests AND cthon26 wrappers.  Expect several minutes of wall time.
+./check -nfs -g nfs
 ```
 
 xfstests' standard output follows:
@@ -115,13 +124,21 @@ interprets the exit code, and produces xfstests-standard output:
 
 ## Group tags
 
-All cthon26 wrappers are tagged `auto nfs`, which means they're
-included by default in `./check -g auto` and `./check -g nfs`.
+Every cthon26 wrapper is tagged `auto nfs cthon26`, plus `quick`
+when the test reliably completes in under a second.  Four ways to
+select them:
+
+- **`-g cthon26`** — only cthon26 wrappers.  Canonical invocation.
+- **`-g cthon26,quick`** — fast subset (quick wrappers only).
+- **`-g nfs`** — cthon26 wrappers AND every upstream xfstests NFS
+  test.  Expect dozens of tests and several minutes of wall time.
+- **`-g auto`** — the default xfstests "reasonable workload" group;
+  includes cthon26 plus upstream auto-tagged tests across every
+  filesystem.  Combine with `-nfs` to limit to NFS.
 
 Tests that may take several seconds (e.g. `op_readdir_many` creates
-1024 files, `op_allocate` writes 4 MiB) are NOT tagged `quick`.
-Tests that complete in well under a second are tagged `auto nfs
-quick` so `./check -g quick` stays fast.
+1024 files, `op_allocate` writes 4 MiB) omit `quick` but keep
+`cthon26`, so `-g cthon26` still selects them.
 
 ## Contributing
 

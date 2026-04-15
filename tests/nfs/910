@@ -9,7 +9,7 @@
 # posix_fadvise(2) -> NFSv4.2 IO_ADVISE (RFC 7862 S5).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick
+_begin_fstest auto nfs quick cthon26
 
 _cleanup()
 {

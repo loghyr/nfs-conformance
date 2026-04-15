@@ -11,7 +11,7 @@
 # binary; see nfsv42-tests/op_access.c for the per-case details.
 #
 . ./common/preamble
-_begin_fstest auto nfs quick
+_begin_fstest auto nfs quick cthon26
 
 _cleanup()
 {
