@@ -1,4 +1,5 @@
 # Build artifacts
+cb_getattr_probe
 op_allocate
 op_io_advise
 op_seek

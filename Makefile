@@ -32,11 +32,14 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_readdir op_open_excl op_mknod_fifo \
         op_deleg_attr
 
+# Auxiliary probe tools (not run by runtests; used by individual tests).
+PROBES = cb_getattr_probe
+
 CHECK_DIR ?= .
 
 .PHONY: all clean check install
 
-all: $(TESTS)
+all: $(TESTS) $(PROBES)
 
 subr.o: subr.c tests.h
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -45,8 +48,12 @@ subr.o: subr.c tests.h
 op_%: op_%.c subr.o tests.h
 	$(CC) $(CFLAGS) $(LDFLAGS) $< subr.o -o $@
 
+# Probe tools: standalone binaries, no test harness dependency.
+cb_getattr_probe: cb_getattr_probe.c rpc_wire.h
+	$(CC) $(CFLAGS) $(LDFLAGS) cb_getattr_probe.c -o cb_getattr_probe
+
 clean:
-	rm -f $(TESTS) subr.o
+	rm -f $(TESTS) $(PROBES) subr.o
 	rm -rf *.dSYM
 
 check: all
@@ -54,5 +61,5 @@ check: all
 
 install: all
 	install -d $(DESTDIR)$(libexecdir)/nfsv42-tests
-	install -m 755 $(TESTS) runtests \
+	install -m 755 $(TESTS) $(PROBES) runtests \
 	        $(DESTDIR)$(libexecdir)/nfsv42-tests/

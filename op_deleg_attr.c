@@ -57,7 +57,18 @@
  *      return 4096; a mismatch indicates the client's in-kernel size
  *      tracking diverged from the attribute cache.
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ *   7. CB_GETATTR via independent second client.  Requires -S SERVER and
+ *      optionally -P NFSPATH_PREFIX (export-relative prefix for the test
+ *      directory; omit if the NFS mount is at the server export root).
+ *      Opens a file and pwrite 4 KiB (holding the WRITE delegation), then
+ *      exec()s cb_getattr_probe as a separate NFSv4.1 client that issues
+ *      PUTROOTFH + LOOKUP + GETATTR, which causes the server to issue
+ *      CB_GETATTR to this client.  Verifies that the probe receives the
+ *      delegated size (4096).  Silently skipped if cb_getattr_probe is not
+ *      in PATH (install it from nfsv42-tests alongside this binary).
+ *
+ * Portable: POSIX across Linux / FreeBSD / macOS / Solaris (cases 1-6).
+ * Case 7 requires a Linux/Unix NFS server on port 2049 (TCP).
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -84,11 +95,13 @@ static const char *myname = "op_deleg_attr";
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: %s [-hstfn] [-d DIR]\n"
+		"usage: %s [-hstfn] [-d DIR] [-S SERVER] [-P NFSPATH_PREFIX]\n"
 		"  probe NFSv4 attribute tracking under write delegations\n"
 		"  (RFC 7530 S18.7 GETATTR / S20.1 CB_GETATTR)\n"
 		"  -h help  -s silent  -t timing  -f function-only\n"
-		"  -n no mkdir  -d DIR  (default cwd)\n",
+		"  -n no mkdir  -d DIR  (default cwd)\n"
+		"  -S SERVER          enable case 7: NFS server for CB_GETATTR probe\n"
+		"  -P NFSPATH_PREFIX  export-relative prefix to test dir (default \"\")\n",
 		myname);
 }
 
@@ -418,11 +431,123 @@ static void case_seek_end_vs_stat(void)
 	unlink(f);
 }
 
+/* case 7 ---------------------------------------------------------------- */
+
+static void case_cb_getattr(const char *server, const char *nfs_dir)
+{
+	char f[64];
+	char probe_path[256];
+	snprintf(f, sizeof(f), "t_da.cb.%ld", (long)getpid());
+	unlink(f);
+
+	/*
+	 * Build the export-relative path for the probe:
+	 * If nfs_dir is non-empty, it's the export-relative path to the
+	 * test directory, so the file is at "nfs_dir/filename".
+	 * If empty (mount is at export root), use just the filename.
+	 */
+	if (nfs_dir && nfs_dir[0] != '\0')
+		snprintf(probe_path, sizeof(probe_path), "%s/%s", nfs_dir, f);
+	else
+		snprintf(probe_path, sizeof(probe_path), "%s", f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case7: open: %s", strerror(errno));
+		return;
+	}
+
+	unsigned char buf[4096];
+	fill_pattern(buf, sizeof(buf), 7);
+	if (pwrite_all(fd, buf, sizeof(buf), 0, "case7: pwrite") != 0) {
+		close(fd); unlink(f); return;
+	}
+
+	/*
+	 * File is still open.  If the server granted a WRITE delegation
+	 * the kernel now holds it.  Exec cb_getattr_probe as a separate
+	 * NFSv4.1 client: it performs EXCHANGE_ID + CREATE_SESSION +
+	 * SEQUENCE + PUTROOTFH + LOOKUP + GETATTR.  The server must issue
+	 * CB_GETATTR to this process before answering.
+	 */
+	int pfd[2];
+	if (pipe(pfd) != 0) {
+		complain("case7: pipe: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+
+	pid_t pid = fork();
+	if (pid < 0) {
+		complain("case7: fork: %s", strerror(errno));
+		close(pfd[0]); close(pfd[1]);
+		close(fd); unlink(f); return;
+	}
+
+	if (pid == 0) {
+		/* Child: redirect stdout → pipe, exec the probe */
+		close(pfd[0]);
+		if (dup2(pfd[1], STDOUT_FILENO) < 0) _exit(1);
+		close(pfd[1]);
+
+		const char *probe_argv[] = {
+			"cb_getattr_probe",
+			"-s", server,
+			"-p", probe_path,
+			NULL
+		};
+		execvp("cb_getattr_probe", (char *const *)probe_argv);
+		/* exec failed — signal SKIP (77) if binary not found */
+		_exit(errno == ENOENT ? 77 : 1);
+	}
+
+	/* Parent: collect probe output */
+	close(pfd[1]);
+	char out[128] = { 0 };
+	ssize_t n = read(pfd[0], out, sizeof(out) - 1);
+	close(pfd[0]);
+	if (n > 0)
+		out[n] = '\0';
+
+	int wstatus = 0;
+	waitpid(pid, &wstatus, 0);
+	int rc = WIFEXITED(wstatus) ? WEXITSTATUS(wstatus) : -1;
+
+	if (rc == 77) {
+		fprintf(stderr,
+			"NOTE: case7: cb_getattr_probe not in PATH "
+			"-- build nfsv42-tests and add to PATH\n");
+		close(fd); unlink(f);
+		return; /* not a failure */
+	}
+	if (rc != 0) {
+		complain("case7: cb_getattr_probe exited %d", rc);
+		close(fd); unlink(f); return;
+	}
+
+	/* Parse "size=N change=N" */
+	unsigned long long probe_size = 0;
+	if (sscanf(out, "size=%llu", &probe_size) != 1) {
+		complain("case7: cannot parse probe output: '%s'", out);
+		close(fd); unlink(f); return;
+	}
+
+	if (probe_size != 4096)
+		complain("case7: probe size %llu != 4096 "
+			 "(CB_GETATTR returned wrong size, "
+			 "or server does not grant WRITE delegations)",
+			 probe_size);
+
+	close(fd);
+	unlink(f);
+}
+
 /* main ------------------------------------------------------------------ */
 
 int main(int argc, char **argv)
 {
-	const char *dir = ".";
+	const char *dir       = ".";
+	const char *cb_server = NULL;  /* -S SERVER for case 7 */
+	const char *cb_nfsdir = NULL;  /* -P PREFIX for case 7 */
 	struct timespec t0, t1;
 
 	while (--argc > 0 && argv[1][0] == '-') {
@@ -437,8 +562,17 @@ int main(int argc, char **argv)
 			case 'd':
 				if (argc < 2) { usage(); return TEST_FAIL; }
 				dir = argv[1];
-				argv++;
-				argc--;
+				argv++; argc--;
+				goto next;
+			case 'S':
+				if (argc < 2) { usage(); return TEST_FAIL; }
+				cb_server = argv[1];
+				argv++; argc--;
+				goto next;
+			case 'P':
+				if (argc < 2) { usage(); return TEST_FAIL; }
+				cb_nfsdir = argv[1];
+				argv++; argc--;
 				goto next;
 			default: usage(); return TEST_FAIL;
 			}
@@ -461,6 +595,9 @@ next:
 	case_ftruncate_attr();
 	case_close_reopen();
 	case_seek_end_vs_stat();
+
+	if (cb_server)
+		case_cb_getattr(cb_server, cb_nfsdir ? cb_nfsdir : "");
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
