@@ -10,6 +10,11 @@ Thin shell wrappers that expose every cthon26/nfsv42-tests binary to
 de-facto filesystem conformance suite that the Linux filesystem and
 NFS communities run every day.
 
+**This file is the quick-start.**  Deep-dive guide with `local.config`
+examples, Kerberos / TLS mounts, debugging failures via `.out.bad`,
+contributing new wrappers, and the upstream submission plan:
+[`../docs/xfstests.md`](../docs/xfstests.md).
+
 Each cthon26 binary becomes one xfstests test under the `nfs` group.
 xfstests' standard machinery (`./check -nfs`, per-test `.out` golden
 comparison, `_notrun` for environmental skips, `auto`/`quick`/`stress`
