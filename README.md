@@ -77,6 +77,17 @@ Either way, set `CTHON26_BIN` in your environment (or in
 export CTHON26_BIN=/path/to/cthon26/nfsv42-tests
 ```
 
+After installing (or adding new wrappers later), rebuild xfstests so
+it regenerates `tests/nfs/group.list`:
+
+```
+cd /path/to/xfstests && make
+```
+
+`install.sh` auto-registers the `cthon26` group in
+`doc/group-names.txt` so that rebuild succeeds; without it xfstests
+refuses to build a `group.list` that references undocumented groups.
+
 ## Running
 
 ```

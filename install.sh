@@ -93,6 +93,20 @@ for f in "$SCRIPT_DIR"/tests/nfs/*; do
     fi
 done
 
+# xfstests refuses to build tests/nfs/group.list if any group tag used
+# in a wrapper's _begin_fstest line is not documented in
+# doc/group-names.txt.  Register the cthon26 group so `make` succeeds
+# and `./check -g cthon26` works.
+GROUP_DOC="$DEST/doc/group-names.txt"
+if [ -f "$GROUP_DOC" ] && ! grep -q '^cthon26[[:space:]]' "$GROUP_DOC"; then
+    if [ $DRY -eq 1 ]; then
+        echo "would register: cthon26 group in $GROUP_DOC"
+    else
+        printf 'cthon26\tcthon26 NFS conformance wrappers (out-of-tree)\n' \
+            >> "$GROUP_DOC"
+    fi
+fi
+
 if [ $DRY -eq 0 ]; then
     n=$(ls "$SCRIPT_DIR/tests/nfs/" | grep -cEv '\.out$' || true)
     echo "Installed common/cthon26 + $n test wrappers into $DEST"
@@ -100,5 +114,6 @@ if [ $DRY -eq 0 ]; then
     echo "Next steps:"
     echo "  export CTHON26_BIN=/path/to/cthon26/nfsv42-tests"
     echo "  cd $DEST"
-    echo "  ./check -nfs -g nfs"
+    echo "  make              # regenerate tests/nfs/group.list"
+    echo "  ./check -nfs -g cthon26"
 fi
