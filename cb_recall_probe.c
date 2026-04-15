@@ -81,6 +81,7 @@
 
 /* OPEN share flags (RFC 5661 §18.16) */
 #define OPEN4_SHARE_ACCESS_READ  1u
+#define OPEN4_SHARE_ACCESS_WRITE 2u
 #define OPEN4_SHARE_DENY_NONE    0u
 #define OPEN4_NOCREATE           0u   /* opentype4: RFC 5661 §18.16.1 */
 #define CLAIM_NULL               0u   /* open_claim_type4 */
@@ -430,6 +431,7 @@ static int do_open(int fd, uint32_t xid,
 		   const uint8_t sessionid[16], uint32_t slot_seqid,
 		   uint64_t clientid,
 		   char **comp, int n_comp,
+		   uint32_t share_access,
 		   uint8_t open_stateid[16])
 {
 	static uint8_t buf[BUF_SZ];
@@ -470,7 +472,7 @@ static int do_open(int fd, uint32_t xid,
 	 */
 	if (!rpc_put_u32(buf, sizeof(buf), &pos, OP_OPEN))              return -1;
 	if (!rpc_put_u32(buf, sizeof(buf), &pos, 0u))                   return -1;
-	if (!rpc_put_u32(buf, sizeof(buf), &pos, OPEN4_SHARE_ACCESS_READ)) return -1;
+	if (!rpc_put_u32(buf, sizeof(buf), &pos, share_access))         return -1;
 	if (!rpc_put_u32(buf, sizeof(buf), &pos, OPEN4_SHARE_DENY_NONE))   return -1;
 	if (!rpc_put_u64(buf, sizeof(buf), &pos, clientid))             return -1;
 	if (!rpc_put_str(buf, sizeof(buf), &pos, "rp_owner", 8))        return -1;
@@ -627,20 +629,23 @@ int main(int argc, char **argv)
 {
 	const char *server  = NULL;
 	const char *nfspath = NULL;
+	uint32_t share_access = OPEN4_SHARE_ACCESS_READ;
 	int c;
 
-	while ((c = getopt(argc, argv, "s:p:h")) != -1) {
+	while ((c = getopt(argc, argv, "s:p:wh")) != -1) {
 		switch (c) {
 		case 's': server  = optarg; break;
 		case 'p': nfspath = optarg; break;
+		case 'w': share_access = OPEN4_SHARE_ACCESS_WRITE; break;
 		case 'h':
-			printf("Usage: cb_recall_probe -s SERVER -p NFSPATH\n"
+			printf("Usage: cb_recall_probe -s SERVER -p NFSPATH [-w]\n"
 			       "Opens and closes the file via a separate NFSv4.1 session,\n"
-			       "triggering CB_RECALL if the kernel holds a WRITE delegation.\n");
+			       "triggering CB_RECALL if the kernel holds a conflicting delegation.\n"
+			       "  -w  open for WRITE (default: READ)\n");
 			return 0;
 		default:
 			fprintf(stderr,
-				"Usage: cb_recall_probe -s SERVER -p NFSPATH\n");
+				"Usage: cb_recall_probe -s SERVER -p NFSPATH [-w]\n");
 			return 2;
 		}
 	}
@@ -706,7 +711,7 @@ int main(int argc, char **argv)
 	uint32_t slot_seqid = seqid + 1u;
 
 	if (do_open(fd, xid++, sessionid, slot_seqid, clientid,
-		    comp, n_comp, open_stateid) < 0) {
+		    comp, n_comp, share_access, open_stateid) < 0) {
 		close(fd); return 1;
 	}
 	slot_seqid++;

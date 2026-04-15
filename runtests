@@ -60,7 +60,7 @@ if [ -z "$SELECTED" ]; then
               op_readdir op_open_excl op_mknod_fifo \
               op_commit op_truncate_grow op_unicode_names op_readdir_many \
               op_read_plus_sparse \
-              op_deleg_attr op_deleg_recall"
+              op_deleg_attr op_deleg_recall op_deleg_read"
 fi
 
 HERE=$(cd "$(dirname "$0")" && pwd)
