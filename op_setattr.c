@@ -201,9 +201,31 @@ static void case_chown_noop(void)
 
 	uid_t u = getuid();
 	gid_t g = getgid();
-	if (chown(a, u, g) != 0)
-		complain("case5: chown(%u,%u) no-op: %s",
-			 (unsigned)u, (unsigned)g, strerror(errno));
+	if (chown(a, u, g) != 0) {
+		/*
+		 * NFSv4 SETATTR on owner/owner_group sends XDR strings of the
+		 * form "user@domain".  If the client has idmapping enabled
+		 * (nfs4_disable_idmapping=N) and idmapd cannot resolve the
+		 * local uid/gid to a name the server accepts, the server
+		 * returns NFS4ERR_BADOWNER, which Linux surfaces as EINVAL.
+		 * The chown itself is POSIX-valid (owner chowning to their
+		 * own uid/gid is always a no-op); the failure is environmental,
+		 * not a server or test bug.  NOTE and continue instead of FAIL.
+		 * See README "NFSv4 idmap and the chown no-op" for the user-
+		 * side fix.
+		 */
+		if (errno == EINVAL) {
+			if (!Sflag)
+				printf("NOTE: %s: case5 chown(%u,%u) no-op "
+				       "returned EINVAL (likely NFS4ERR_BADOWNER "
+				       "from client-side idmap mismatch; see "
+				       "README)\n",
+				       myname, (unsigned)u, (unsigned)g);
+		} else {
+			complain("case5: chown(%u,%u) no-op: %s",
+				 (unsigned)u, (unsigned)g, strerror(errno));
+		}
+	}
 	unlink(a);
 }
 

@@ -128,6 +128,113 @@ sudo mount -t nfs -o vers=4.2 server:/export /mnt/nfs42
 make check CHECK_DIR=/mnt/nfs42
 ```
 
+## Interpreting environmental NOTEs
+
+In the Connectathon tradition, mount options and server configuration are
+tester decisions, not test decisions.  The tests do not try to auto-fix
+your environment — they run what you give them, report clearly when a
+failure is environmental rather than server- or client-code-level, and
+let you decide whether to change mount options, idmap, Kerberos, TLS, or
+the test scope.
+
+This section documents recurring `NOTE:` and `SKIP:` messages whose root
+cause is configuration rather than a defect in the code under test.
+
+### NFSv4 idmap and the chown no-op
+
+Symptom (from `op_setattr`):
+
+```
+NOTE: op_setattr: case5 chown(1066,10) no-op returned EINVAL
+      (likely NFS4ERR_BADOWNER from client-side idmap mismatch; see README)
+```
+
+Why: `SETATTR{owner, owner_group}` in NFSv4 transmits XDR strings of the
+form `user@domain` / `group@domain`.  The Linux client consults
+`nfs4_disable_idmapping` and `/etc/idmapd.conf` to decide whether to send
+numeric IDs (`1066`) or resolved names (`loghyr@nfsv4bat.org`).  If
+idmapping is enabled on the client but idmapd cannot reach its configured
+backend (LDAP, NIS, nsswitch) *or* the domain the client uses does not
+match the server's idmap domain, the server returns `NFS4ERR_BADOWNER`.
+Linux surfaces that as `EINVAL`.  File *creation* still works because
+AUTH_SYS carries the uid numerically in the RPC credential, bypassing
+idmap entirely.  Only operations that encode `owner@` / `owner_group@`
+strings — `SETATTR` primarily — hit the idmap path.
+
+To verify: `stat` a file in the mount.  If ownership displays correctly,
+the credential path is fine; the mismatch is limited to the string form.
+
+Three ways to resolve, all tester-side:
+
+1. Disable client-side idmapping (fastest; treat AUTH_SYS as fully
+   numeric):
+
+   ```
+   echo Y | sudo tee /sys/module/nfs/parameters/nfs4_disable_idmapping
+   ```
+
+   Persist in `/etc/modprobe.d/nfs.conf`:
+
+   ```
+   options nfs nfs4_disable_idmapping=1
+   ```
+
+   Remount after changing.
+
+2. Align the idmap domain between client and server and point idmapd at
+   a working name source.  Typical working `/etc/idmapd.conf`:
+
+   ```
+   [General]
+   Domain = your.domain
+
+   [Translation]
+   Method = nsswitch
+   ```
+
+   Restart `nfs-idmapd`.  The server must be in the same `Domain`.
+
+3. Leave idmap as-is and accept the `NOTE`.  Other SETATTR cases
+   (`chmod`, `truncate`, `utimensat`) do not encode owner strings and
+   pass regardless.
+
+### Kerberos (sec=krb5 / krb5i / krb5p)
+
+These tests make no assumption about authentication flavour.  If you
+mount with `sec=krb5*`, every uid that runs the suite needs its own
+ticket:
+
+```
+kinit user@YOUR.REALM
+klist                    # verify Default principal: user@YOUR.REALM
+./runtests -d /mnt/...
+```
+
+A cache that contains only a service principal (`nfs/host.domain@REALM`)
+is not a user ticket.  The kernel will present it to the server, which
+will map it to `nobody` or root-squash it, and every operation under the
+mount will see `EACCES`.  `df` silently hides entries whose `statfs`
+fails, which can make an apparently-unmounted filesystem look like a
+different bug.  `mount | grep nfs` is authoritative.
+
+### NFS over TLS (xprtsec=tls / xprtsec=mtls)
+
+Mounting with `xprtsec=tls` or `xprtsec=mtls` is a tester decision; the
+tests run the same over TLS as they do over plain TCP, because TLS is
+below the RPC layer.  The usual failure mode is `mount` itself —
+certificate trust, SAN, or `tlshd` not running — not a test result.
+Check `systemctl status tlshd` on both ends and confirm the server's
+certificate is trusted before running the suite.
+
+### Renameat2 flags not supported
+
+```
+SKIP: op_rename_atomic: renameat2 RENAME_NOREPLACE not supported ...
+```
+
+Needs Linux NFS client ~6.1+ for `renameat2` flag passthrough.  Older
+clients return `EINVAL` for any non-zero flag argument.
+
 ## Exit codes
 
 | Code | Meaning |
