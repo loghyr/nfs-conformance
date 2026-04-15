@@ -53,6 +53,10 @@ Bread-and-butter NFSv4 ops that predate v4.1 but matter for every server.  Cthon
 | `op_rename_atomic` | RENAME with atomic flags | `renameat2(RENAME_NOREPLACE / RENAME_EXCHANGE)` | Linux (glibc 2.28+) |
 | `op_symlink` | SYMLINK, READLINK (RFC 7530 §18.22/§18.26) | `symlinkat`, `readlinkat` | POSIX |
 | `op_linkat` | LINK (RFC 7530 §18.14) | `link`, `linkat` | POSIX (case 6 Linux-only) |
+| `op_access` | ACCESS (RFC 7530 §18.1) | `access`, `faccessat` | POSIX |
+| `op_setattr` | SETATTR (RFC 7530 §18.30) | `chmod`, `chown`, `truncate`, `utimensat` | POSIX |
+| `op_mkdir` | CREATE(NF4DIR) (RFC 7530 §18.4) | `mkdir`, `mkdirat` | POSIX |
+| `op_rmdir` | REMOVE on dir (RFC 7530 §18.25) | `rmdir`, `unlinkat(AT_REMOVEDIR)` | POSIX |
 
 ## Non-goals (deferred)
 

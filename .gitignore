@@ -12,6 +12,10 @@ op_change_attr
 op_rename_atomic
 op_symlink
 op_linkat
+op_access
+op_setattr
+op_mkdir
+op_rmdir
 *.o
 *.dSYM/
 
