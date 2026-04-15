@@ -92,6 +92,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,6 +102,12 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+/* Some POSIX systems do not define PATH_MAX in <limits.h>; fall back to
+ * the Linux default so the mountstats path buffer is still sized. */
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 int Hflag = 0;
 int Sflag = 0;
