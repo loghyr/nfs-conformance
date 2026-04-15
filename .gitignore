@@ -1,5 +1,6 @@
 # Build artifacts
 cb_getattr_probe
+cb_recall_probe
 op_allocate
 op_io_advise
 op_seek
@@ -21,6 +22,8 @@ op_readdir
 op_open_excl
 op_mknod_fifo
 op_deleg_attr
+op_deleg_recall
+op_server_caps
 *.o
 *.dSYM/
 
