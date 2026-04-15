@@ -174,8 +174,9 @@ static void case_grow_from_existing(off_t dense, off_t extend)
 
 	/* Prefix must be intact */
 	unsigned char *vbuf = malloc((size_t)dense);
-	if (vbuf && pread_all(fd, vbuf, (size_t)dense, 0, "case2:vprefix")
-		    == 0) {
+	if (!vbuf) {
+		complain("case2: malloc vbuf");
+	} else if (pread_all(fd, vbuf, (size_t)dense, 0, "case2:vprefix") == 0) {
 		size_t miss = check_pattern(vbuf, (size_t)dense, 0xDEADBEEF);
 		if (miss)
 			complain("case2: prefix corrupted at byte %zu",
@@ -185,8 +186,9 @@ static void case_grow_from_existing(off_t dense, off_t extend)
 
 	/* Tail must be zero */
 	unsigned char *tail = malloc((size_t)extend);
-	if (tail && pread_all(fd, tail, (size_t)extend, dense, "case2:tail")
-		    == 0) {
+	if (!tail) {
+		complain("case2: malloc tail");
+	} else if (pread_all(fd, tail, (size_t)extend, dense, "case2:tail") == 0) {
 		if (!all_zero(tail, (size_t)extend))
 			complain("case2: preallocated tail not zero");
 	}
@@ -238,8 +240,9 @@ static void case_inside_existing(off_t dense)
 	}
 
 	unsigned char *vbuf = malloc((size_t)dense);
-	if (vbuf && pread_all(fd, vbuf, (size_t)dense, 0, "case3:verify")
-		    == 0) {
+	if (!vbuf) {
+		complain("case3: malloc vbuf");
+	} else if (pread_all(fd, vbuf, (size_t)dense, 0, "case3:verify") == 0) {
 		size_t miss = check_pattern(vbuf, (size_t)dense, 0xCAFEBABE);
 		if (miss)
 			complain("case3: in-range allocate corrupted data "

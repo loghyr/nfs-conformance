@@ -124,7 +124,9 @@ static void case_basic_clone(int sfd, int dfd)
 	}
 
 	unsigned char *rb = malloc(FILE_LEN);
-	if (rb && pread_all(dfd, rb, FILE_LEN, 0, "case1:verify") == 0) {
+	if (!rb) {
+		complain("case1: malloc rb");
+	} else if (pread_all(dfd, rb, FILE_LEN, 0, "case1:verify") == 0) {
 		size_t miss = check_pattern(rb, FILE_LEN, 0xC10E);
 		if (miss)
 			complain("case1: clone content mismatch at byte %zu",
@@ -169,7 +171,9 @@ static void case_cow_semantics(int sfd, int dfd)
 
 	/* DST should still hold the ORIGINAL pattern */
 	unsigned char *rb = malloc(FILE_LEN);
-	if (rb && pread_all(dfd, rb, FILE_LEN, 0, "case2:verify dst") == 0) {
+	if (!rb) {
+		complain("case2: malloc rb");
+	} else if (pread_all(dfd, rb, FILE_LEN, 0, "case2:verify dst") == 0) {
 		size_t miss = check_pattern(rb, FILE_LEN, 0xB01);
 		if (miss)
 			complain("case2: dst was affected by src mutation "

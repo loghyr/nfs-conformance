@@ -157,7 +157,9 @@ static void case_simple(int sfd, int dfd)
 	}
 
 	unsigned char *rb = malloc(FILE_LEN);
-	if (rb && pread_all(dfd, rb, FILE_LEN, 0, "case1:verify") == 0) {
+	if (!rb) {
+		complain("case1: malloc rb");
+	} else if (pread_all(dfd, rb, FILE_LEN, 0, "case1:verify") == 0) {
 		size_t miss = check_pattern(rb, FILE_LEN, 0x12345678);
 		if (miss)
 			complain("case1: dst mismatch at byte %zu", miss - 1);
@@ -190,7 +192,9 @@ static void case_offset(int sfd, int dfd)
 	}
 
 	unsigned char *rb = malloc(copy_len);
-	if (rb && pread_all(dfd, rb, copy_len, 0, "case2:verify") == 0) {
+	if (!rb) {
+		complain("case2: malloc rb");
+	} else if (pread_all(dfd, rb, copy_len, 0, "case2:verify") == 0) {
 		if (memcmp(rb, buf + mid, copy_len) != 0)
 			complain("case2: dst != src[mid..mid+len)");
 	}

@@ -124,7 +124,9 @@ static void case_basic_punch(int fd)
 
 	/* Prefix: pattern intact */
 	unsigned char *pre = malloc(HOLE_OFF);
-	if (pre && pread_all(fd, pre, HOLE_OFF, 0, "case1:prefix") == 0) {
+	if (!pre) {
+		complain("case1: malloc pre");
+	} else if (pread_all(fd, pre, HOLE_OFF, 0, "case1:prefix") == 0) {
 		size_t miss = check_pattern(pre, HOLE_OFF, 0xAB);
 		if (miss)
 			complain("case1: prefix corrupted at byte %zu",
@@ -134,7 +136,9 @@ static void case_basic_punch(int fd)
 
 	/* Hole region: all zero */
 	unsigned char *hol = malloc(HOLE_LEN);
-	if (hol && pread_all(fd, hol, HOLE_LEN, HOLE_OFF, "case1:hole") == 0) {
+	if (!hol) {
+		complain("case1: malloc hol");
+	} else if (pread_all(fd, hol, HOLE_LEN, HOLE_OFF, "case1:hole") == 0) {
 		if (!all_zero(hol, HOLE_LEN))
 			complain("case1: punched region not zero");
 	}
@@ -144,9 +148,10 @@ static void case_basic_punch(int fd)
 	size_t suf_len = FILE_LEN - HOLE_OFF - HOLE_LEN;
 	unsigned char *suf = malloc(suf_len);
 	unsigned char *exp = malloc(FILE_LEN);
-	if (suf && exp
-	    && pread_all(fd, suf, suf_len, HOLE_OFF + HOLE_LEN,
-			 "case1:suffix") == 0) {
+	if (!suf || !exp) {
+		complain("case1: malloc suf/exp");
+	} else if (pread_all(fd, suf, suf_len, HOLE_OFF + HOLE_LEN,
+			     "case1:suffix") == 0) {
 		fill_pattern(exp, FILE_LEN, 0xAB);
 		if (memcmp(suf, exp + HOLE_OFF + HOLE_LEN, suf_len) != 0)
 			complain("case1: suffix corrupted");
@@ -179,7 +184,9 @@ static void case_hole_at_eof(int fd)
 			 (long long)st.st_size, (long long)FILE_LEN);
 
 	unsigned char *t = malloc(tail_len);
-	if (t && pread_all(fd, t, tail_len, tail_off, "case2:tail") == 0) {
+	if (!t) {
+		complain("case2: malloc t");
+	} else if (pread_all(fd, t, tail_len, tail_off, "case2:tail") == 0) {
 		if (!all_zero(t, (size_t)tail_len))
 			complain("case2: tail punch region not zero");
 	}
@@ -219,7 +226,9 @@ static void case_full_punch(int fd)
 		       (long long)after.st_blocks);
 
 	unsigned char *buf = malloc(FILE_LEN);
-	if (buf && pread_all(fd, buf, FILE_LEN, 0, "case3:verify") == 0) {
+	if (!buf) {
+		complain("case3: malloc buf");
+	} else if (pread_all(fd, buf, FILE_LEN, 0, "case3:verify") == 0) {
 		if (!all_zero(buf, FILE_LEN))
 			complain("case3: file not zero after full punch");
 	}
