@@ -649,13 +649,24 @@ static int read_mount_getattr_count(const char *dir, unsigned long long *count)
 			in_per_op = 1;
 			continue;
 		}
-		if (in_per_op && strncmp(line, "\tGETATTR:", 9) == 0) {
-			unsigned long long c = 0;
-			if (sscanf(line + 9, " %llu", &c) == 1) {
-				*count = c;
-				found = 0;
+		if (in_per_op) {
+			/*
+			 * Per-op lines are indented with a tab + variable
+			 * spaces (the label is right-aligned): e.g.
+			 *     "\t     GETATTR: 6319 6319 0 ...".
+			 * Skip all leading whitespace before matching.
+			 */
+			const char *p = line;
+			while (*p == ' ' || *p == '\t')
+				p++;
+			if (strncmp(p, "GETATTR:", 8) == 0) {
+				unsigned long long c = 0;
+				if (sscanf(p + 8, " %llu", &c) == 1) {
+					*count = c;
+					found = 0;
+				}
+				break;
 			}
-			break;
 		}
 	}
 
