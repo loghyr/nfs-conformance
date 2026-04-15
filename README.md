@@ -28,6 +28,7 @@ running system, the test SKIPs instead of failing.
 | `op_deallocate` | DEALLOCATE | `fallocate(FALLOC_FL_PUNCH_HOLE)` | Linux |
 | `op_clone` | CLONE | `ioctl(FICLONE)` | Linux + reflink FS (btrfs, xfs reflink, zfs) |
 | `op_statx_btime` | `time_create` (S12.2) | `statx(STATX_BTIME)` | Linux 4.11+ |
+| `op_read_plus_sparse` | READ_PLUS over holes (S15) | `pread(2)` on sparse files | Linux / any NFSv4.2 client |
 
 ### NFSv4.2 XATTR extension (RFC 8276)
 
@@ -61,6 +62,13 @@ Bread-and-butter NFSv4 ops that predate v4.1 but matter for every server.  Cthon
 | `op_open_excl` | OPEN createmode=EXCLUSIVE4_1 (RFC 7530 §18.16) | `open(O_CREAT\|O_EXCL)`, `openat` | POSIX |
 | `op_mknod_fifo` | CREATE(NF4FIFO) (RFC 7530 §18.4) | `mkfifo(3)` | POSIX |
 | `op_deleg_attr` | GETATTR / CB_GETATTR attribute delegation (RFC 7530 §18.7 / §20.1) | `fstat(2)`, `stat(2)`, `ftruncate(2)`, `lseek(SEEK_END)` | POSIX |
+| `op_deleg_recall` | CB_RECALL of write delegation (RFC 5661 §20.3) | separate-client OPEN via `cb_recall_probe` | Linux NFS client |
+| `op_deleg_read` | read delegation + recall on conflicting write (RFC 7530 §10.4.2) | separate-client OPEN via `cb_recall_probe -w` | Linux NFS client |
+| `op_commit` | COMMIT (RFC 7530 §18.3) | `fsync(2)` / `fdatasync(2)` | POSIX |
+| `op_truncate_grow` | SETATTR(size) hole-creating grow (RFC 7530 §5.8.1.5) | `ftruncate(2)` extending | POSIX |
+| `op_unicode_names` | name encoding (RFC 7530 §1.4.2) | `open`/`stat`/`readdir`/`rename` with UTF-8 names | POSIX + UTF-8 locale |
+| `op_readdir_many` | READDIR cookie continuation (RFC 7530 §18.23) | `opendir`/`readdir` over ~1024 entries | POSIX |
+| `op_server_caps` | EXCHANGE_ID / SECINFO_NO_NAME | hand-rolled NFSv4.1 session | Linux + TCP/2049 to server (`-S SERVER` required) |
 
 ## Non-goals (deferred)
 
