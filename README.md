@@ -57,6 +57,9 @@ Bread-and-butter NFSv4 ops that predate v4.1 but matter for every server.  Cthon
 | `op_setattr` | SETATTR (RFC 7530 §18.30) | `chmod`, `chown`, `truncate`, `utimensat` | POSIX |
 | `op_mkdir` | CREATE(NF4DIR) (RFC 7530 §18.4) | `mkdir`, `mkdirat` | POSIX |
 | `op_rmdir` | REMOVE on dir (RFC 7530 §18.25) | `rmdir`, `unlinkat(AT_REMOVEDIR)` | POSIX |
+| `op_readdir` | READDIR (RFC 7530 §18.23) | `opendir(3)`, `readdir(3)`, `rewinddir(3)` | POSIX |
+| `op_open_excl` | OPEN createmode=EXCLUSIVE4_1 (RFC 7530 §18.16) | `open(O_CREAT\|O_EXCL)`, `openat` | POSIX |
+| `op_mknod_fifo` | CREATE(NF4FIFO) (RFC 7530 §18.4) | `mkfifo(3)` | POSIX |
 
 ## Non-goals (deferred)
 
@@ -84,7 +87,7 @@ userspace hook that exercises them:
 make
 ```
 
-Produces the six `op_*` binaries in the current directory.  No
+Produces all `op_*` binaries in the current directory.  No
 autotools; plain Makefile with a single compile per test.
 
 On macOS, the Linux- and XSI-only tests compile to skip stubs that

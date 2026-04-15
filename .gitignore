@@ -16,6 +16,9 @@ op_access
 op_setattr
 op_mkdir
 op_rmdir
+op_readdir
+op_open_excl
+op_mknod_fifo
 *.o
 *.dSYM/
 
