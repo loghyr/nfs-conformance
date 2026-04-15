@@ -288,9 +288,9 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_simple(sfd, dfd);
-	case_offset(sfd, dfd);
-	case_sparse_preservation(sfd, dfd);
+	RUN_CASE("case_simple", case_simple(sfd, dfd));
+	RUN_CASE("case_offset", case_offset(sfd, dfd));
+	RUN_CASE("case_sparse_preservation", case_sparse_preservation(sfd, dfd));
 
 	close(sfd);
 	close(dfd);

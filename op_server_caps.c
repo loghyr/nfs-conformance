@@ -620,8 +620,8 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_exchange_id(server);
-	case_secinfo(server);
+	RUN_CASE("case_exchange_id", case_exchange_id(server));
+	RUN_CASE("case_secinfo", case_secinfo(server));
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

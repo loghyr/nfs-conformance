@@ -341,12 +341,12 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_round_trip();
-	case_stat_vs_lstat();
-	case_dangling();
-	case_long_target();
-	case_loop();
-	case_unlink_link_not_target();
+	RUN_CASE("case_round_trip", case_round_trip());
+	RUN_CASE("case_stat_vs_lstat", case_stat_vs_lstat());
+	RUN_CASE("case_dangling", case_dangling());
+	RUN_CASE("case_long_target", case_long_target());
+	RUN_CASE("case_loop", case_loop());
+	RUN_CASE("case_unlink_link_not_target", case_unlink_link_not_target());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

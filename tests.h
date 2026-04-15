@@ -140,4 +140,45 @@ size_t check_pattern(const unsigned char *buf, size_t n, unsigned seed);
  */
 int all_zero(const unsigned char *buf, size_t n);
 
+/*
+ * Case-level TAP helpers.
+ *
+ * Each call to tap_case_begin(name) opens a new TAP sub-test scope.
+ * complain() calls between tap_case_begin() and tap_case_end() mark
+ * THIS case as failed (in addition to the overall test_failed flag
+ * that finish() honours).  tap_case_end() closes the scope and, when
+ * running in TAP13 mode (NFSV42_TESTS_TAP env var set), emits one
+ * "ok N - name" or "not ok N - name" line.
+ *
+ * Outside TAP mode these helpers are no-ops for output but still
+ * track per-case pass/fail so finish() reports correctly.
+ *
+ * Pattern in each test's main():
+ *
+ *   tap_case_begin("case_foo");
+ *   case_foo();
+ *   tap_case_end();
+ *
+ *   tap_case_begin("case_bar");
+ *   case_bar(arg1, arg2);
+ *   tap_case_end();
+ *
+ * finish() emits a delayed TAP plan (1..N) covering every case that
+ * ran in this binary.  Tests that do not use tap_case_begin/end fall
+ * back to the legacy one-test-per-binary mapping: finish() emits
+ * "1..1" + "ok 1 - testname" or "not ok 1 - testname".
+ */
+void tap_case_begin(const char *name);
+void tap_case_end(void);
+
+/*
+ * RUN_CASE -- bracket a single case call with tap_case_begin()/end().
+ * `call` is the literal function call including arguments:
+ *
+ *   RUN_CASE("case_fsync_roundtrip", case_fsync_roundtrip());
+ *   RUN_CASE("case_recall", case_recall(cb_server, cb_nfsdir));
+ */
+#define RUN_CASE(name, call) \
+	do { tap_case_begin(name); call; tap_case_end(); } while (0)
+
 #endif /* NFSV42_TESTS_H */

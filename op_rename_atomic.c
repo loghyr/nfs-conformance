@@ -351,11 +351,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_noreplace_to_empty();
-	case_noreplace_collision();
-	case_exchange();
-	case_both_flags();
-	case_missing_source();
+	RUN_CASE("case_noreplace_to_empty", case_noreplace_to_empty());
+	RUN_CASE("case_noreplace_collision", case_noreplace_collision());
+	RUN_CASE("case_exchange", case_exchange());
+	RUN_CASE("case_both_flags", case_both_flags());
+	RUN_CASE("case_missing_source", case_missing_source());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

@@ -316,11 +316,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_extend_from_zero(NULL, 4 * 1024 * 1024);
-	case_grow_from_existing(1 * 1024 * 1024, 2 * 1024 * 1024);
-	case_inside_existing(1 * 1024 * 1024);
-	case_zero_length();
-	case_negative_offset();
+	RUN_CASE("case_extend_from_zero", case_extend_from_zero(NULL, 4 * 1024 * 1024));
+	RUN_CASE("case_grow_from_existing", case_grow_from_existing(1 * 1024 * 1024, 2 * 1024 * 1024));
+	RUN_CASE("case_inside_existing", case_inside_existing(1 * 1024 * 1024));
+	RUN_CASE("case_zero_length", case_zero_length());
+	RUN_CASE("case_negative_offset", case_negative_offset());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

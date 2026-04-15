@@ -419,12 +419,12 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_basic();
-	case_mixed_types();
-	case_large();
-	case_empty();
-	case_enoent();
-	case_rewinddir();
+	RUN_CASE("case_basic", case_basic());
+	RUN_CASE("case_mixed_types", case_mixed_types());
+	RUN_CASE("case_large", case_large());
+	RUN_CASE("case_empty", case_empty());
+	RUN_CASE("case_enoent", case_enoent());
+	RUN_CASE("case_rewinddir", case_rewinddir());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

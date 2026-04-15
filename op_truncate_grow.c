@@ -342,11 +342,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_grow_from_empty();
-	case_grow_with_prefix();
-	case_grow_and_seek_hole();
-	case_read_past_eof();
-	case_grow_write_into_hole();
+	RUN_CASE("case_grow_from_empty", case_grow_from_empty());
+	RUN_CASE("case_grow_with_prefix", case_grow_with_prefix());
+	RUN_CASE("case_grow_and_seek_hole", case_grow_and_seek_hole());
+	RUN_CASE("case_read_past_eof", case_read_past_eof());
+	RUN_CASE("case_grow_write_into_hole", case_grow_write_into_hole());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

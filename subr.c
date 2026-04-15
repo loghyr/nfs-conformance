@@ -71,10 +71,42 @@ static int tap_mode(void)
  */
 static const char *tap_name = "test";
 
+/*
+ * Case-level TAP state.
+ *
+ * tap_cases_started flips to 1 on the first tap_case_begin() call and
+ * tells finish() to emit a delayed "1..N" plan across the cases that
+ * ran rather than the legacy "1..1" single-test plan.  tap_case_num
+ * is the 1-based index of the next case to emit.  tap_case_failed
+ * tracks whether complain() fired since the last tap_case_begin().
+ *
+ * Outside TAP mode these are still maintained (cheap) so case-level
+ * semantics behave identically; only the printf calls are gated.
+ */
+static int tap_cases_started;
+static int tap_case_num;
+static int tap_case_failed_flag;
+static char tap_case_name[128];
+
+/*
+ * tap_emit_header -- write "TAP version 13" exactly once, before any
+ * other TAP output.  Called from prelude() and from the first TAP
+ * emitter if prelude() was somehow skipped.
+ */
+static int tap_header_emitted;
+static void tap_emit_header(void)
+{
+	if (tap_mode() && !tap_header_emitted) {
+		printf("TAP version 13\n");
+		tap_header_emitted = 1;
+	}
+}
+
 void complain(const char *fmt, ...)
 {
 	va_list ap;
 	if (tap_mode()) {
+		tap_emit_header();
 		printf("# FAIL: ");
 		va_start(ap, fmt);
 		vprintf(fmt, ap);
@@ -89,12 +121,14 @@ void complain(const char *fmt, ...)
 		fprintf(stderr, "\n");
 	}
 	test_failed = 1;
+	tap_case_failed_flag = 1;
 }
 
 void bail(const char *fmt, ...)
 {
 	va_list ap;
 	if (tap_mode()) {
+		tap_emit_header();
 		printf("Bail out! ");
 		va_start(ap, fmt);
 		vprintf(fmt, ap);
@@ -115,7 +149,23 @@ void skip(const char *fmt, ...)
 {
 	va_list ap;
 	if (tap_mode()) {
-		printf("1..1\nok 1 - %s # SKIP ", tap_name);
+		tap_emit_header();
+		/*
+		 * TAP 13 allows a "1..0 # SKIP reason" plan to short-
+		 * circuit the whole binary; prove reports the binary as
+		 * "skipped" without expecting any ok/not ok lines.  Use
+		 * that form when no cases have been begun yet; if a case
+		 * was mid-flight, emit the skip as a case-level SKIP
+		 * inside an ongoing plan.
+		 */
+		if (tap_cases_started) {
+			tap_case_num++;
+			printf("ok %d - %s # SKIP ",
+			       tap_case_num,
+			       tap_case_name[0] ? tap_case_name : tap_name);
+		} else {
+			printf("1..0 # SKIP ");
+		}
 		va_start(ap, fmt);
 		vprintf(fmt, ap);
 		va_end(ap);
@@ -134,8 +184,15 @@ void skip(const char *fmt, ...)
 int finish(const char *testname)
 {
 	if (tap_mode()) {
-		printf("1..1\n%s 1 - %s\n",
-		       test_failed ? "not ok" : "ok", testname);
+		tap_emit_header();
+		if (tap_cases_started) {
+			/* Delayed plan across the cases that ran. */
+			printf("1..%d\n", tap_case_num);
+		} else {
+			/* Legacy: one TAP test per binary. */
+			printf("1..1\n%s 1 - %s\n",
+			       test_failed ? "not ok" : "ok", testname);
+		}
 		fflush(stdout);
 		return test_failed ? TEST_FAIL : TEST_PASS;
 	}
@@ -150,11 +207,42 @@ void prelude(const char *testname, const char *purpose)
 {
 	tap_name = testname;
 	if (tap_mode()) {
+		tap_emit_header();
 		printf("# TEST: %s: %s\n", testname, purpose);
 		fflush(stdout);
 	} else if (!Sflag) {
 		printf("TEST: %s: %s\n", testname, purpose);
 	}
+}
+
+void tap_case_begin(const char *name)
+{
+	tap_cases_started = 1;
+	tap_case_failed_flag = 0;
+	if (name) {
+		size_t n = strlen(name);
+		if (n >= sizeof(tap_case_name))
+			n = sizeof(tap_case_name) - 1;
+		memcpy(tap_case_name, name, n);
+		tap_case_name[n] = '\0';
+	} else {
+		tap_case_name[0] = '\0';
+	}
+}
+
+void tap_case_end(void)
+{
+	tap_case_num++;
+	if (tap_mode()) {
+		tap_emit_header();
+		printf("%s %d - %s\n",
+		       tap_case_failed_flag ? "not ok" : "ok",
+		       tap_case_num,
+		       tap_case_name[0] ? tap_case_name : "unnamed");
+		fflush(stdout);
+	}
+	tap_case_failed_flag = 0;
+	tap_case_name[0] = '\0';
 }
 
 void cd_or_skip(const char *testname, const char *dir, int nflag)

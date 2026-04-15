@@ -261,11 +261,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_ascii();
-	case_latin1();
-	case_cjk();
-	case_emoji();
-	case_rename_across_widths();
+	RUN_CASE("case_ascii", case_ascii());
+	RUN_CASE("case_latin1", case_latin1());
+	RUN_CASE("case_cjk", case_cjk());
+	RUN_CASE("case_emoji", case_emoji());
+	RUN_CASE("case_rename_across_widths", case_rename_across_widths());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

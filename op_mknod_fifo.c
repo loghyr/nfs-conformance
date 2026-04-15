@@ -243,12 +243,12 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_basic();
-	case_mode();
-	case_eexist();
-	case_open_rdonly();
-	case_open_wronly();
-	case_unlink();
+	RUN_CASE("case_basic", case_basic());
+	RUN_CASE("case_mode", case_mode());
+	RUN_CASE("case_eexist", case_eexist());
+	RUN_CASE("case_open_rdonly", case_open_rdonly());
+	RUN_CASE("case_open_wronly", case_open_wronly());
+	RUN_CASE("case_unlink", case_unlink());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

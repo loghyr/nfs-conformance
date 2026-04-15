@@ -360,11 +360,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_conflict_same_range(name);
-	case_getlk_reports(name);
-	case_dup_survives_close(name);
-	case_disjoint_ok(name);
-	case_fork_shares(name);
+	RUN_CASE("case_conflict_same_range", case_conflict_same_range(name));
+	RUN_CASE("case_getlk_reports", case_getlk_reports(name));
+	RUN_CASE("case_dup_survives_close", case_dup_survives_close(name));
+	RUN_CASE("case_disjoint_ok", case_disjoint_ok(name));
+	RUN_CASE("case_fork_shares", case_fork_shares(name));
 
 	unlink(name);
 

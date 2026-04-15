@@ -399,10 +399,12 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_local_shared_read();
+	RUN_CASE("case_local_shared_read", case_local_shared_read());
 	if (server) {
-		case_shared_read(server, nfs_dir);
-		case_recall_by_write(server, nfs_dir);
+		RUN_CASE("case_shared_read",
+			 case_shared_read(server, nfs_dir));
+		RUN_CASE("case_recall_by_write",
+			 case_recall_by_write(server, nfs_dir));
 	} else if (!Sflag) {
 		printf("NOTE: %s: -S SERVER not provided; skipping "
 		       "cross-client cases 2 and 3\n", myname);

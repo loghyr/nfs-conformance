@@ -390,12 +390,12 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_basic_link();
-	case_shared_contents();
-	case_unlink_nlink();
-	case_link_to_existing();
-	case_link_to_symlink();
-	case_link_at_empty_path();
+	RUN_CASE("case_basic_link", case_basic_link());
+	RUN_CASE("case_shared_contents", case_shared_contents());
+	RUN_CASE("case_unlink_nlink", case_unlink_nlink());
+	RUN_CASE("case_link_to_existing", case_link_to_existing());
+	RUN_CASE("case_link_to_symlink", case_link_to_symlink());
+	RUN_CASE("case_link_at_empty_path", case_link_at_empty_path());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

@@ -317,10 +317,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_write_commit();
+	RUN_CASE("case_write_commit", case_write_commit());
 
 	if (cb_server)
-		case_recall(cb_server, cb_nfsdir ? cb_nfsdir : "");
+		RUN_CASE("case_recall",
+			 case_recall(cb_server, cb_nfsdir ? cb_nfsdir : ""));
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

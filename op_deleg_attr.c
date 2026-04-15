@@ -818,17 +818,19 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_fstat_stat_agree();
-	case_incremental_size();
-	case_fork_child_stat();
-	case_ftruncate_attr();
-	case_close_reopen();
-	case_seek_end_vs_stat();
+	RUN_CASE("case_fstat_stat_agree", case_fstat_stat_agree());
+	RUN_CASE("case_incremental_size", case_incremental_size());
+	RUN_CASE("case_fork_child_stat", case_fork_child_stat());
+	RUN_CASE("case_ftruncate_attr", case_ftruncate_attr());
+	RUN_CASE("case_close_reopen", case_close_reopen());
+	RUN_CASE("case_seek_end_vs_stat", case_seek_end_vs_stat());
 
 	if (cb_server)
-		case_cb_getattr(cb_server, cb_nfsdir ? cb_nfsdir : "");
+		RUN_CASE("case_cb_getattr",
+			 case_cb_getattr(cb_server, cb_nfsdir ? cb_nfsdir : ""));
 
-	case_thread_stat_no_callback(dir);
+	RUN_CASE("case_thread_stat_no_callback",
+		 case_thread_stat_no_callback(dir));
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

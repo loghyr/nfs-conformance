@@ -221,8 +221,8 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_basic_clone(sfd, dfd);
-	case_cow_semantics(sfd, dfd);
+	RUN_CASE("case_basic_clone", case_basic_clone(sfd, dfd));
+	RUN_CASE("case_cow_semantics", case_cow_semantics(sfd, dfd));
 
 	close(sfd);
 	close(dfd);

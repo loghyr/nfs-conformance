@@ -194,11 +194,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_basic();
-	case_mode();
-	case_exists();
-	case_missing_parent();
-	case_mkdirat();
+	RUN_CASE("case_basic", case_basic());
+	RUN_CASE("case_mode", case_mode());
+	RUN_CASE("case_exists", case_exists());
+	RUN_CASE("case_missing_parent", case_missing_parent());
+	RUN_CASE("case_mkdirat", case_mkdirat());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

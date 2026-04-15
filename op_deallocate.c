@@ -272,9 +272,9 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_basic_punch(fd);
-	case_hole_at_eof(fd);
-	case_full_punch(fd);
+	RUN_CASE("case_basic_punch", case_basic_punch(fd));
+	RUN_CASE("case_hole_at_eof", case_hole_at_eof(fd));
+	RUN_CASE("case_full_punch", case_full_punch(fd));
 
 	close(fd);
 	unlink(name);

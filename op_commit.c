@@ -301,11 +301,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_fsync_roundtrip();
-	case_fdatasync_roundtrip();
-	case_log_style();
-	case_fsync_ronly_fd();
-	case_fsync_empty();
+	RUN_CASE("case_fsync_roundtrip", case_fsync_roundtrip());
+	RUN_CASE("case_fdatasync_roundtrip", case_fdatasync_roundtrip());
+	RUN_CASE("case_log_style", case_log_style());
+	RUN_CASE("case_fsync_ronly_fd", case_fsync_ronly_fd());
+	RUN_CASE("case_fsync_empty", case_fsync_empty());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

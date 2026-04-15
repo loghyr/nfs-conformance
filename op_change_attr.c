@@ -272,10 +272,10 @@ next:
 
 	/* Case 1 is implicit: feature_probe + any other case confirms
 	 * that STATX_CHANGE_COOKIE is populated post-create. */
-	case_write_advances(name);
-	case_monotonic(name);
-	case_read_does_not_advance(name);
-	case_chmod_advances(name);
+	RUN_CASE("case_write_advances", case_write_advances(name));
+	RUN_CASE("case_monotonic", case_monotonic(name));
+	RUN_CASE("case_read_does_not_advance", case_read_does_not_advance(name));
+	RUN_CASE("case_chmod_advances", case_chmod_advances(name));
 
 	unlink(name);
 

@@ -228,12 +228,12 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_exists();
-	case_missing();
-	case_rw();
-	case_readonly_w();
-	case_nonexec();
-	case_faccessat();
+	RUN_CASE("case_exists", case_exists());
+	RUN_CASE("case_missing", case_missing());
+	RUN_CASE("case_rw", case_rw());
+	RUN_CASE("case_readonly_w", case_readonly_w());
+	RUN_CASE("case_nonexec", case_nonexec());
+	RUN_CASE("case_faccessat", case_faccessat());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

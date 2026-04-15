@@ -307,11 +307,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_punch_middle();
-	case_giant_hole();
-	case_cross_boundary();
-	case_pure_hole();
-	case_tail_hole();
+	RUN_CASE("case_punch_middle", case_punch_middle());
+	RUN_CASE("case_giant_hole", case_giant_hole());
+	RUN_CASE("case_cross_boundary", case_cross_boundary());
+	RUN_CASE("case_pure_hole", case_pure_hole());
+	RUN_CASE("case_tail_hole", case_tail_hole());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

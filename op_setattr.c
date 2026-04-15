@@ -320,13 +320,13 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_chmod_restrict();
-	case_chmod_round_trip();
-	case_truncate_shrink();
-	case_truncate_grow();
-	case_chown_noop();
-	case_utime_now();
-	case_utime_omit();
+	RUN_CASE("case_chmod_restrict", case_chmod_restrict());
+	RUN_CASE("case_chmod_round_trip", case_chmod_round_trip());
+	RUN_CASE("case_truncate_shrink", case_truncate_shrink());
+	RUN_CASE("case_truncate_grow", case_truncate_grow());
+	RUN_CASE("case_chown_noop", case_chown_noop());
+	RUN_CASE("case_utime_now", case_utime_now());
+	RUN_CASE("case_utime_omit", case_utime_omit());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

@@ -339,9 +339,9 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_walk_all(n, pid);
-	case_walk_twice(n, pid);
-	case_walk_with_mutation(n, pid);
+	RUN_CASE("case_walk_all", case_walk_all(n, pid));
+	RUN_CASE("case_walk_twice", case_walk_twice(n, pid));
+	RUN_CASE("case_walk_with_mutation", case_walk_with_mutation(n, pid));
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

@@ -209,11 +209,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_create_new();
-	case_eexist();
-	case_zero_size();
-	case_write_read();
-	case_openat();
+	RUN_CASE("case_create_new", case_create_new());
+	RUN_CASE("case_eexist", case_eexist());
+	RUN_CASE("case_zero_size", case_zero_size());
+	RUN_CASE("case_write_read", case_write_read());
+	RUN_CASE("case_openat", case_openat());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

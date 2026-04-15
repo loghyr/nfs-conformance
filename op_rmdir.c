@@ -216,11 +216,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_basic();
-	case_non_empty();
-	case_missing();
-	case_regular_file();
-	case_unlinkat();
+	RUN_CASE("case_basic", case_basic());
+	RUN_CASE("case_non_empty", case_non_empty());
+	RUN_CASE("case_missing", case_missing());
+	RUN_CASE("case_regular_file", case_regular_file());
+	RUN_CASE("case_unlinkat", case_unlinkat());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

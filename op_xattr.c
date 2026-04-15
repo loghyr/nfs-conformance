@@ -342,11 +342,11 @@ next:
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	case_roundtrip(name);
-	case_create_flag(name);
-	case_replace_flag(name);
-	case_multiple(name);
-	case_large_value(name);
+	RUN_CASE("case_roundtrip", case_roundtrip(name));
+	RUN_CASE("case_create_flag", case_create_flag(name));
+	RUN_CASE("case_replace_flag", case_replace_flag(name));
+	RUN_CASE("case_multiple", case_multiple(name));
+	RUN_CASE("case_large_value", case_large_value(name));
 
 	unlink(name);
 
