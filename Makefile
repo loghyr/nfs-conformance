@@ -30,10 +30,10 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_change_attr op_rename_atomic op_symlink op_linkat \
         op_access op_setattr op_mkdir op_rmdir \
         op_readdir op_open_excl op_mknod_fifo \
-        op_deleg_attr
+        op_deleg_attr op_deleg_recall op_server_caps
 
 # Auxiliary probe tools (not run by runtests; used by individual tests).
-PROBES = cb_getattr_probe
+PROBES = cb_getattr_probe cb_recall_probe
 
 CHECK_DIR ?= .
 
@@ -51,6 +51,12 @@ op_%: op_%.c subr.o tests.h
 # Probe tools: standalone binaries, no test harness dependency.
 cb_getattr_probe: cb_getattr_probe.c rpc_wire.h
 	$(CC) $(CFLAGS) $(LDFLAGS) cb_getattr_probe.c -o cb_getattr_probe
+
+cb_recall_probe: cb_recall_probe.c rpc_wire.h
+	$(CC) $(CFLAGS) $(LDFLAGS) cb_recall_probe.c -o cb_recall_probe
+
+# op_server_caps uses rpc_wire.h directly (in addition to the standard deps)
+op_server_caps: rpc_wire.h
 
 clean:
 	rm -f $(TESTS) $(PROBES) subr.o
