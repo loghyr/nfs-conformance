@@ -118,7 +118,8 @@ static int scan_and_count(const char *prefix, int n, long pid,
 	struct dirent *de;
 	while ((de = readdir(dp)) != NULL) {
 		size_t nl = strlen(de->d_name);
-		if (nl < prefix_len + 6 + suffix_len)
+		/* "prefix.NNNN" + suffix ".PID" = prefix_len + 5 + suffix_len */
+		if (nl < prefix_len + 5 + suffix_len)
 			continue;
 		if (strncmp(de->d_name, prefix, prefix_len) != 0)
 			continue;
@@ -252,7 +253,8 @@ static void case_walk_with_mutation(int n, long pid)
 	struct dirent *de;
 	while ((de = readdir(dp)) != NULL) {
 		size_t nl = strlen(de->d_name);
-		if (nl < prefix_len + 6 + suffix_len)
+		/* "prefix.NNNN" + suffix ".PID" = prefix_len + 5 + suffix_len */
+		if (nl < prefix_len + 5 + suffix_len)
 			continue;
 		if (strncmp(de->d_name, prefix, prefix_len) != 0)
 			continue;
