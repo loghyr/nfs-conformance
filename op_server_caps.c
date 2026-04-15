@@ -259,7 +259,7 @@ static int do_exchange_id(int fd, uint32_t xid, const char *owner_id,
 	if (rlen < 0) return -1;
 
 	size_t p = 0;
-	uint32_t nres, resop, status;
+	uint32_t nres, resop, status = 0;
 	if (!skip_rpc_hdr(buf, (size_t)rlen, &p))             return -1;
 	if (!skip_compound_hdr(buf, (size_t)rlen, &p, &nres)) return -1;
 	if (nres != 1)                                         return -1;
@@ -323,7 +323,7 @@ static int do_create_session(int fd, uint32_t xid,
 	if (rlen < 0) return -1;
 
 	size_t p = 0;
-	uint32_t nres, resop, status;
+	uint32_t nres, resop, status = 0;
 	if (!skip_rpc_hdr(buf, (size_t)rlen, &p))             return -1;
 	if (!skip_compound_hdr(buf, (size_t)rlen, &p, &nres)) return -1;
 	if (nres != 1)                                         return -1;
@@ -427,7 +427,7 @@ static int do_secinfo(int fd, uint32_t xid,
 	if (rlen < 0) return -1;
 
 	size_t p = 0;
-	uint32_t nres, resop, status;
+	uint32_t nres, resop, status = 0;
 	if (!skip_rpc_hdr(buf, (size_t)rlen, &p))             return -1;
 	if (!skip_compound_hdr(buf, (size_t)rlen, &p, &nres)) return -1;
 	if (nres != nops)                                      return -1;
