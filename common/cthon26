@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# common/cthon26 -- helpers shared by every cthon26 xfstests wrapper.
+#
+# Sourced by each wrapper after ./common/preamble and ./common/filter.
+# Provides:
+#
+#   _require_cthon26_binary NAME
+#       Calls _notrun if $CTHON26_BIN/NAME is not executable.  Exports
+#       CTHON26_BIN so the wrapper can invoke it.  Default
+#       CTHON26_BIN=/usr/local/lib/cthon26 mirrors `make install`.
+#
+#   _cthon26_run NAME
+#       Runs "$CTHON26_BIN/NAME -d $TEST_DIR -s", captures output, and
+#       translates cthon26's 0/1/77/99 exit-code convention into
+#       xfstests idioms:
+#           rc==0   print "Silence is golden." (matches .out -> PASS)
+#           rc==77  call _notrun with the first SKIP reason
+#           rc!=0   echo captured output and exit non-zero
+#                   (xfstests' golden-diff reports FAIL)
+#
+#   _cthon26_run_args NAME [extra args...]
+#       Same as _cthon26_run but appends extra arguments after
+#       "-d $TEST_DIR -s".  Used by tests that need -S SERVER,
+#       -P NFSPATH_PREFIX, -m, etc.
+
+_require_cthon26_binary()
+{
+	local bin="$1"
+	export CTHON26_BIN="${CTHON26_BIN:-/usr/local/lib/cthon26}"
+	if [ ! -x "$CTHON26_BIN/$bin" ]; then
+		_notrun "cthon26 binary '$bin' not found at $CTHON26_BIN; set CTHON26_BIN env var to the nfsv42-tests build dir"
+	fi
+}
+
+_cthon26_run_args()
+{
+	local bin="$1"
+	shift
+	local output rc reason
+	output=$("$CTHON26_BIN/$bin" -d "$TEST_DIR" -s "$@" 2>&1)
+	rc=$?
+	if [ $rc -eq 77 ]; then
+		# First "SKIP: <reason>" line in captured output.
+		reason=$(echo "$output" | sed -n 's/^SKIP: //p' | head -1)
+		_notrun "${reason:-cthon26 $bin was skipped}"
+	fi
+	if [ $rc -ne 0 ]; then
+		# cthon26 printed FAIL lines to stderr (captured into output).
+		# Emit to test stdout so xfstests' golden diff shows them.
+		echo "$output"
+		status=$rc
+		exit
+	fi
+	echo "Silence is golden."
+}
+
+_cthon26_run()
+{
+	_cthon26_run_args "$1"
+}

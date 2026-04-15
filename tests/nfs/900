@@ -1,0 +1,32 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 900
+#
+# cthon26/nfsv42-tests: op_access
+#
+# Exercises NFSv4 ACCESS (RFC 7530 S18.1) through the access(2) and
+# faccessat(2) POSIX surface.  Delegates to the cthon26 op_access
+# binary; see nfsv42-tests/op_access.c for the per-case details.
+#
+. ./common/preamble
+_begin_fstest auto nfs quick
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_supported_fs nfs
+_require_test
+_require_cthon26_binary op_access
+
+_cthon26_run op_access
+
+status=0
+exit
