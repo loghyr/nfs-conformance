@@ -17,6 +17,9 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifdef __linux__
+#include <sys/sysmacros.h>
+#endif
 #include <unistd.h>
 
 /*
