@@ -74,6 +74,7 @@ if [ -z "$SELECTED" ]; then
               op_xattr op_statx_btime op_ofd_lock op_lock \
               op_change_attr op_rename_atomic op_symlink op_linkat \
               op_access op_setattr op_mkdir op_rmdir op_lookup op_lookupp \
+              op_owner_override \
               op_readdir op_open_excl op_mknod_fifo \
               op_commit op_truncate_grow op_unicode_names op_readdir_many \
               op_read_plus_sparse op_verify op_open_downgrade \
