@@ -26,13 +26,14 @@ PREFIX    ?= /usr/local
 libexecdir ?= $(PREFIX)/libexec
 
 TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
-        op_xattr op_statx_btime op_ofd_lock \
+        op_xattr op_statx_btime op_ofd_lock op_lock \
         op_change_attr op_rename_atomic op_symlink op_linkat \
-        op_access op_setattr op_mkdir op_rmdir \
+        op_access op_setattr op_mkdir op_rmdir op_lookup \
         op_readdir op_open_excl op_mknod_fifo \
         op_commit op_truncate_grow op_unicode_names op_readdir_many \
         op_read_plus_sparse \
-        op_deleg_attr op_deleg_recall op_deleg_read op_server_caps
+        op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write \
+        op_server_caps
 
 # Auxiliary probe tools (not run by runtests; used by individual tests).
 PROBES = cb_getattr_probe cb_recall_probe

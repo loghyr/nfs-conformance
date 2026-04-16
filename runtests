@@ -71,13 +71,13 @@ if [ -z "$SELECTED" ]; then
     # op_server_caps requires -S SERVER and cannot be driven by -d DIR alone;
     # run it separately: op_server_caps -S <server>
     SELECTED="op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
-              op_xattr op_statx_btime op_ofd_lock \
+              op_xattr op_statx_btime op_ofd_lock op_lock \
               op_change_attr op_rename_atomic op_symlink op_linkat \
-              op_access op_setattr op_mkdir op_rmdir \
+              op_access op_setattr op_mkdir op_rmdir op_lookup \
               op_readdir op_open_excl op_mknod_fifo \
               op_commit op_truncate_grow op_unicode_names op_readdir_many \
               op_read_plus_sparse \
-              op_deleg_attr op_deleg_recall op_deleg_read"
+              op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write"
 fi
 
 HERE=$(cd "$(dirname "$0")" && pwd)
