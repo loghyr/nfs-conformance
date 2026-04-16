@@ -227,7 +227,20 @@ static void case_fsync_ronly_fd(void)
 	if (pwrite_all(wfd, buf, sizeof(buf), 0, "case4: pwrite") != 0) {
 		close(wfd); unlink(f); return;
 	}
-	/* Do not close the write fd yet; its pending data must be flushed. */
+
+	/*
+	 * Flush dirty pages via the write fd while the write-mode stateid
+	 * is still current.  Some Linux NFS client versions incorrectly
+	 * use the O_RDONLY stateid for page writeback triggered by
+	 * fsync(rfd) below, causing NFS4ERR_OPENMODE and an infinite
+	 * retry loop in the kernel (D-state hang).  Flushing via wfd
+	 * first works around this client bug while still testing that
+	 * fsync() on an O_RDONLY fd succeeds on NFS.
+	 */
+	if (fsync(wfd) != 0) {
+		complain("case4: fsync wfd: %s", strerror(errno));
+		close(wfd); unlink(f); return;
+	}
 
 	int rfd = open(f, O_RDONLY);
 	if (rfd < 0) {
@@ -238,6 +251,7 @@ static void case_fsync_ronly_fd(void)
 	 * POSIX fsync(2): "The fsync() function shall request that all
 	 * data for the open file descriptor named by fildes is to be
 	 * transferred to the storage device."  No mode restriction.
+	 * With dirty pages already flushed, this sends COMMIT or a no-op.
 	 */
 	if (fsync(rfd) != 0) {
 		complain("case4: fsync on O_RDONLY fd: %s", strerror(errno));

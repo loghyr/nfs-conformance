@@ -133,14 +133,27 @@ static void case_deep_path(void)
 	char base[64];
 	snprintf(base, sizeof(base), "t_lk.dp.%ld", (long)getpid());
 
+	int depth = 8;
+	rmdir_r(base, depth);
+	rmdir(base);
+	if (mkdir(base, 0755) != 0) {
+		complain("case3: mkdir(%s): %s", base, strerror(errno));
+		return;
+	}
+
 	char path[PATH_MAX];
 	snprintf(path, sizeof(path), "%s", base);
 
-	int depth = 8;
 	for (int i = 0; i < depth; i++) {
 		size_t len = strlen(path);
 		snprintf(path + len, sizeof(path) - len, "/d");
-		mkdir(path, 0755);
+		if (mkdir(path, 0755) != 0) {
+			complain("case3: mkdir depth %d: %s", i + 1,
+				 strerror(errno));
+			rmdir_r(base, i);
+			rmdir(base);
+			return;
+		}
 	}
 
 	size_t len = strlen(path);

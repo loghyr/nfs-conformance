@@ -207,8 +207,16 @@ static void case_conflict(void)
 		if (try_lock(cfd, F_WRLCK, 0, 512, F_SETLK) != 0) _exit(1);
 		char c = 'L';
 		(void)write(pipefd[1], &c, 1);
-		/* Wait for parent to signal us to unlock. */
-		(void)read(pipefd[1], &c, 1);
+		/*
+		 * Wait for parent to terminate us.  pipefd[1] is the
+		 * write-only end -- reading it returns EBADF immediately
+		 * and would release the lock before the parent tests for
+		 * the conflict.  pause() sleeps until the SIGTERM that
+		 * the parent sends at the reap: label.  The NFS client
+		 * sends LOCKU on process exit, so no explicit unlock is
+		 * needed.
+		 */
+		pause();
 		try_lock(cfd, F_UNLCK, 0, 512, F_SETLK);
 		close(cfd);
 		_exit(0);

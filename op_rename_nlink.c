@@ -252,9 +252,19 @@ static void case_parent_timestamps(void)
 	stat(src, &st_src_after);
 	stat(dst, &st_dst_after);
 
-	if (st_src_after.st_mtime <= st_src_before.st_mtime)
+	/*
+	 * Use st_mtim (nanosecond precision) rather than st_mtime
+	 * (second precision).  The rename and stat can both land in the
+	 * same wall-clock second when the kernel NFS client caches mtime
+	 * at second granularity; nanoseconds distinguish them.
+	 */
+	if (!(st_src_after.st_mtim.tv_sec > st_src_before.st_mtim.tv_sec ||
+	      (st_src_after.st_mtim.tv_sec == st_src_before.st_mtim.tv_sec &&
+	       st_src_after.st_mtim.tv_nsec > st_src_before.st_mtim.tv_nsec)))
 		complain("case4: src parent mtime did not advance");
-	if (st_dst_after.st_mtime <= st_dst_before.st_mtime)
+	if (!(st_dst_after.st_mtim.tv_sec > st_dst_before.st_mtim.tv_sec ||
+	      (st_dst_after.st_mtim.tv_sec == st_dst_before.st_mtim.tv_sec &&
+	       st_dst_after.st_mtim.tv_nsec > st_dst_before.st_mtim.tv_nsec)))
 		complain("case4: dst parent mtime did not advance");
 
 	unlink(df);
