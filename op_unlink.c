@@ -7,28 +7,42 @@
  * Cases:
  *
  *   1. Basic unlink.  Create, unlink, stat returns ENOENT.
+ *      (POSIX.1-1990 unlink() S5.5.1)
  *
  *   2. Unlink on directory returns EISDIR (or EPERM on some systems).
+ *      (POSIX.1-1990 unlink() S5.5.1: EISDIR error condition;
+ *      EPERM is an alternative on some implementations)
  *
  *   3. Unlink on nonexistent name returns ENOENT.
+ *      (POSIX.1-1990 unlink() S5.5.1: ENOENT error condition)
  *
  *   4. Parent nlink unchanged.  Regular-file unlink must NOT decrement
  *      the parent directory nlink (only rmdir does that).
+ *      (POSIX.1-1990 S5.5.1: nlink decremented on the file itself,
+ *      not on the parent directory)
  *
  *   5. Parent mtime/ctime advance.  After unlink, the parent
  *      directory's mtime and ctime must advance; atime must not.
+ *      (POSIX.1-2008 unlink(), "Upon successful completion" clause:
+ *      "the st_ctime and st_mtime fields of the parent directory
+ *      shall be marked for update")
  *
  *   6. Hard-link unlink.  Create a file, hard-link it, unlink the
  *      original name.  Verify nlink decrements from 2 to 1 and the
  *      file is still accessible via the second name.  Verify the
  *      inode ctime advances.
+ *      (POSIX.1-1990 unlink() S5.5.1: "the st_nlink count of the
+ *      file shall be decremented")
  *
  *   7. Unlink-open-file (silly rename).  Open a file, unlink the
  *      name, verify the fd is still readable/writable (the inode
  *      stays alive until the last fd closes).  On NFS this triggers
  *      the "silly rename" path.
+ *      (POSIX.1-1990 unlink() S5.5.1: "the file's contents shall
+ *      be accessible until all file descriptors ... are closed")
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-1990 S5.5.1 (unlink) across Linux / FreeBSD /
+ * macOS / Solaris.
  */
 
 #define _POSIX_C_SOURCE 200809L

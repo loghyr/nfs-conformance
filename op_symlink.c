@@ -10,14 +10,19 @@
  *   1. Basic round-trip.  Create symlink with a known target via
  *      symlinkat, read it back via readlinkat, verify the target
  *      string matches byte-for-byte.
+ *      (POSIX.1-1990 XSI symlink() S5.5.7 + readlink() S5.6.7)
  *
  *   2. lstat vs stat.  stat() on a symlink to an existing file
  *      returns the target's attributes; lstat() returns the link's
  *      own attributes (S_IFLNK).  Verify both.
+ *      (POSIX.1-1990 XSI lstat() S5.6.2: "shall not follow symbolic
+ *      links")
  *
  *   3. Dangling symlink.  readlink on a link to a nonexistent
  *      target returns the target string (no dereference); stat()
  *      through the link returns ENOENT; lstat() still succeeds.
+ *      (POSIX.1-1990 XSI readlink() S5.6.7: returns contents without
+ *      resolving the target)
  *
  *   4. Long target.  Create a symlink with a target just under
  *      PATH_MAX bytes; verify round-trip.  NFSv4 imposes a
@@ -30,11 +35,17 @@
  *      still returns its immediate target.  (The test creates
  *      both links, checks the readlink surface, and then verifies
  *      open() yields ELOOP.)
+ *      (POSIX.1-1990 XSI open() S6.3.1: ELOOP when too many symbolic
+ *      links are encountered)
  *
  *   6. Unlink semantics.  unlink() on a symlink removes the link,
  *      not the target.  Verify.
+ *      (POSIX.1-1990 XSI symlink() S5.5.7: "the symbolic link itself
+ *      is removed")
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-1990 XSI S5.5.7 (symlink) + S5.6.7 (readlink) +
+ * POSIX.1-2008 (symlinkat / readlinkat) across Linux / FreeBSD /
+ * macOS / Solaris.
  */
 
 #define _POSIX_C_SOURCE 200809L

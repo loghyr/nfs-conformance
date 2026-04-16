@@ -8,28 +8,48 @@
  *
  *   1. chmod stores permission bits.  Create 0644, chmod to 0600,
  *      verify (st_mode & 07777) == 0600.
+ *      (POSIX.1-1990 chmod() S5.6.4: "Upon successful completion,
+ *      chmod() shall set the access permission bits of the file
+ *      named by path to the bit pattern contained in mode")
  *
  *   2. chmod on directory.  mkdir 0755, chmod to 0700, verify.
+ *      (POSIX.1-1990 chmod() S5.6.4)
  *
- *   3. chmod advances mtime and ctime.  Verify atime unchanged.
+ *   3. chmod advances ctime.  Verify inode unchanged.
+ *      (POSIX.1-1990 chmod() S5.6.4: "Upon successful completion,
+ *      chmod() shall mark for update the st_ctime field of the
+ *      file"; mtime is not required to change on a mode-only
+ *      SETATTR)
  *
  *   4. chmod ENOENT.  chmod on nonexistent path.
+ *      (POSIX.1-1990 chmod() S5.6.4: ENOENT error condition)
  *
  *   5. chown updates uid/gid.  No-op chown (to self), verify
  *      stored values.  (Real uid change requires root.)
+ *      (POSIX.1-1990 chown() S5.6.5: "The file's user and group
+ *      IDs shall be set to the numeric values contained in owner
+ *      and group, respectively")
  *
- *   6. chown advances mtime and ctime.  Verify atime unchanged.
+ *   6. chown advances ctime.  Verify inode unchanged.
+ *      (POSIX.1-1990 chown() S5.6.5: "Upon successful completion,
+ *      chown() shall mark for update the st_ctime field of the
+ *      file")
  *
  *   7. chown ENOENT.
+ *      (POSIX.1-1990 chown() S5.6.5: ENOENT error condition)
  *
- *   8. chown clears setuid/setgid bits.  POSIX requires that
- *      changing the owner clears S_ISUID and S_ISGID.  Create
- *      a file with setuid+setgid bits, chown (to self as root,
- *      or verify post-condition if not root), verify the bits
- *      are cleared.  Skipped if not root (cannot set setuid bit
- *      on NFS without privilege).
+ *   8. chown clears setuid/setgid bits.  Create a file with
+ *      setuid+setgid bits, chown to self as root, verify the
+ *      bits are cleared.  Skipped if not root (cannot set
+ *      setuid bit on NFS without privilege).
+ *      (POSIX.1-2008 chown(): "If the specified user ID is
+ *      not equal to the user ID of the file ... the S_ISUID
+ *      and S_ISGID bits ... shall be cleared"; Linux extends
+ *      this to clear the bits on any chown(), including to
+ *      self, even as root)
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-1990 S5.6.4 (chmod) + S5.6.5 (chown) across
+ * Linux / FreeBSD / macOS / Solaris.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -151,8 +171,8 @@ static void case_chmod_timestamps(void)
 		return;
 	}
 
-	if (st_after.st_mtime < st_before.st_mtime)
-		complain("case3: mtime did not advance after chmod");
+	if (st_after.st_ctime < st_before.st_ctime)
+		complain("case3: ctime did not advance after chmod");
 	if (st_after.st_ino != st_before.st_ino)
 		complain("case3: inode changed after chmod");
 

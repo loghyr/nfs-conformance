@@ -7,25 +7,32 @@
  * Cases:
  *
  *   1. F_OK on an existing regular file: returns 0.
+ *      (POSIX.1-2008 access(), S4.4 "checking file accessibility")
  *
  *   2. F_OK on a nonexistent name: returns -1/ENOENT.  Verifies
  *      that ACCESS against a missing object is distinguished from
  *      "present but denied."
+ *      (POSIX.1-2008 access(), ENOENT error condition)
  *
  *   3. R_OK|W_OK on a 0644 file owned by the current uid: returns 0.
+ *      (POSIX.1-2008 access(), permission bit checking)
  *
  *   4. W_OK on a 0444 (read-only) file: returns -1/EACCES.  Tests
  *      that the server computes the per-user access bitmask and
  *      reports "not writable" correctly.
+ *      (POSIX.1-2008 access(), EACCES error condition)
  *
  *   5. X_OK on a 0644 regular file: returns -1/EACCES.  The execute
  *      bit is clear so the server must refuse.
+ *      (POSIX.1-2008 access(), X_OK permission check)
  *
  *   6. F_OK via faccessat(AT_FDCWD, ..., AT_EACCESS): identical
  *      answer to plain access() for an uncomplicated case, exercising
  *      the *at variant.
+ *      (POSIX.1-2008 faccessat(), AT_EACCESS flag)
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-2008 S4.4 (access / faccessat) across Linux /
+ * FreeBSD / macOS / Solaris.
  *
  * Diagnostic value over TLS: ACCESS is a read-side op and is expected
  * to succeed under every auth flavor the export accepts.  If op_access

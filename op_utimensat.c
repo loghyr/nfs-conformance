@@ -12,29 +12,46 @@
  *
  *   1. Nanosecond round-trip.  Set atime.tv_nsec = 123456789 and
  *      mtime.tv_nsec = 987654321.  Stat and verify exact match.
+ *      (POSIX.1-2008 utimensat())
  *
  *   2. Directory timestamps.  Same round-trip on a directory.
+ *      (POSIX.1-2008 utimensat())
  *
  *   3. ENOENT.  utimensat on nonexistent path.
+ *      (POSIX.1-2008 utimensat(): ENOENT error condition)
  *
  *   4. Zero nanoseconds.  Set tv_nsec = 0 explicitly.  Verify
  *      the server does not leak a stale nanosecond value.
+ *      (POSIX.1-2008 utimensat())
  *
  *   5. UTIME_NOW.  Set both times to UTIME_NOW.  Verify both
  *      advance to at least the pre-call wall clock.
+ *      (POSIX.1-2008 utimensat(): "if the tv_nsec field of a
+ *      timespec structure has the value UTIME_NOW, the file's
+ *      relevant timestamp shall be set to the current time")
  *
  *   6. UTIME_OMIT.  Set atime to a known value, mtime to
  *      UTIME_OMIT.  Verify atime changed but mtime did not.
+ *      (POSIX.1-2008 utimensat(): "if the tv_nsec field of a
+ *      timespec structure has the value UTIME_OMIT, the file's
+ *      relevant timestamp shall not be changed")
  *
  *   7. Permission: UTIME_NOW requires write access.  Create a
  *      0444 file, attempt UTIME_NOW as non-owner.  Expect EACCES.
  *      Skipped when running as root.
+ *      (POSIX.1-2008 utimensat(): when UTIME_NOW or times is null,
+ *      the effective user ID shall equal the file owner, or the
+ *      process shall have write permission to the file)
  *
  *   8. Permission: explicit times require ownership.  Create a
  *      0666 file.  As non-owner, attempt explicit time set.
  *      Expect EPERM.  Skipped when running as root.
+ *      (POSIX.1-2008 utimensat(): "if times is not a null pointer
+ *      ... the effective user ID of the process shall equal the
+ *      owner of the file")
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-2008 (utimensat) across Linux / FreeBSD /
+ * macOS / Solaris.
  */
 
 #define _GNU_SOURCE

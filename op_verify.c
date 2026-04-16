@@ -17,28 +17,40 @@
  *   1. Stat consistency.  stat() a file twice in succession;
  *      verify st_ino, st_mode, st_uid, st_gid, st_size are
  *      identical (no one else is modifying the file).
+ *      (POSIX.1-1990 stat() S5.6.2)
  *
  *   2. Size after write.  Create a file, write N bytes, fstat,
- *      close, stat by name — sizes must match exactly.
+ *      close, stat by name -- sizes must match exactly.
+ *      (POSIX.1-1990 stat() S5.6.2: "st_size ... total size of
+ *      the file in bytes"; write() S6.4.2: updates st_size)
  *
  *   3. Mode after chmod.  Create 0644, chmod to 0600, stat;
  *      verify st_mode & 07777 == 0600.
+ *      (POSIX.1-1990 chmod() S5.6.4: "Upon successful completion,
+ *      chmod() shall set the access permission bits")
  *
  *   4. Mtime after write.  stat before write, write, stat after
  *      write.  Mtime after must be >= mtime before.
+ *      (POSIX.1-1990 write() S6.4.2: "Upon successful completion,
+ *      where nbyte is greater than 0, write() shall mark for
+ *      update the st_mtime and st_ctime fields of the file")
  *
  *   5. Change-attr monotonicity.  On Linux with statx, verify
  *      STATX_CHANGE_COOKIE (stx_change_attr) increments after a
  *      write.  Skipped on non-Linux or kernels without statx
  *      change-attr support.
+ *      (Linux-specific: statx(2) STATX_CHANGE_COOKIE, Linux 6.6+;
+ *      maps to NFSv4 change_attr4 attribute)
  *
  *   6. Uid/Gid preserved.  Create a file, fchown to current
  *      uid/gid (no-op chown), stat, verify uid/gid unchanged.
- *      Exercises the SETATTR→GETATTR→VERIFY cycle the client
+ *      Exercises the SETATTR->GETATTR->VERIFY cycle the client
  *      runs internally after chown.
+ *      (POSIX.1-1990 chown() S5.6.5: "The file's user and group
+ *      IDs shall be set")
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
- * Case 5 is Linux-only (statx).
+ * Portable: POSIX.1-1990 S5.6.2 (stat) across Linux / FreeBSD /
+ * macOS / Solaris.  Case 5 is Linux-only (statx).
  */
 
 #define _POSIX_C_SOURCE 200809L

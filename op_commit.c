@@ -10,26 +10,33 @@
  *      After fsync returns, any subsequent opener must see the data.
  *      If the client caches writes without driving COMMIT, a reopen
  *      may see stale bytes or a short file.
+ *      (POSIX.1-1990 fsync(), S6.6.1)
  *
  *   2. pwrite + fdatasync, then reopen and re-read.  fdatasync may
  *      skip some metadata updates but must flush data blocks; NFSv4
  *      COMMIT flushes data, so this path must behave like case 1.
+ *      (POSIX.1b fdatasync(); standardised in POSIX.1-2008 fdatasync())
  *
  *   3. Append-and-flush log pattern: pwrite 1 KiB, fsync, pwrite
  *      another 1 KiB at the next offset, fsync, for 8 rounds total.
  *      Reopen and verify every 1 KiB chunk in order.  Exercises
  *      COMMIT after every WRITE -- worst case for server-side log
  *      commit batching.
+ *      (POSIX.1-1990 fsync(), S6.6.1)
  *
  *   4. fsync on an O_RDONLY fd opened after a separate O_WRONLY fd
  *      wrote.  POSIX allows fsync on any fd for a file whose content
  *      has been modified; the NFS client must not reject fsync based
  *      on the fd's open mode.
+ *      (POSIX.1-1990 fsync() S6.6.1: fsync applies to the file
+ *      referenced by the fd, not to the access mode of the fd)
  *
  *   5. fsync of a zero-byte file: must succeed; tests that COMMIT
  *      does not require preceding WRITEs.
+ *      (POSIX.1-1990 fsync(), S6.6.1)
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-1990 S6.6.1 (fsync) / POSIX.1-2008 fdatasync()
+ * across Linux / FreeBSD / macOS / Solaris.
  */
 
 #define _POSIX_C_SOURCE 200809L

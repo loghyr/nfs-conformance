@@ -8,26 +8,36 @@
  *
  *   1. link(old, new) creates a hardlink; both names refer to the
  *      same inode; st_nlink goes from 1 to 2.
+ *      (POSIX.1-1990 link() S5.3.4: "st_nlink of the file shall
+ *      be incremented")
  *
  *   2. Contents visible via both names.  Writing through `old`
  *      changes contents read through `new`, and vice versa.  This
  *      is the defining property of a hardlink (vs reflink).
+ *      (POSIX.1-1990 link() S5.3.4: "both names denote the same
+ *      file")
  *
  *   3. Unlink decrements nlink.  unlink(old): nlink drops to 1;
  *      file still accessible via `new`.  unlink(new): file gone.
+ *      (POSIX.1-1990 unlink() S5.5.1: "decrement the link count
+ *      of the file named by path")
  *
  *   4. link() target exists: EEXIST.
+ *      (POSIX.1-1990 link() S5.3.4: EEXIST error condition)
  *
  *   5. link() to a symlink: creates a hardlink to the symlink
- *      (POSIX behaviour; linkat with AT_SYMLINK_FOLLOW would
- *      follow it, but plain link()/linkat without the flag does
- *      not).  Verify S_IFLNK on the result.
+ *      (POSIX behaviour; linkat without AT_SYMLINK_FOLLOW links
+ *      the symlink itself, not its target).  Verify S_IFLNK on
+ *      the result.
+ *      (POSIX.1-2008 linkat(): without AT_SYMLINK_FOLLOW, if
+ *      oldpath names a symbolic link, the symbolic link shall
+ *      be linked)
  *
  *   6. linkat(AT_EMPTY_PATH) from an open fd (Linux-only behaviour;
  *      skipped on non-Linux).  Tests linking an already-open file.
  *
- * Portable via link(2) + linkat(2); case 6 is Linux-specific and
- * runtime-skipped elsewhere.
+ * Portable via POSIX.1-1990 S5.3.4 (link) + POSIX.1-2008 (linkat);
+ * case 6 is Linux-specific and runtime-skipped elsewhere.
  */
 
 #define _GNU_SOURCE

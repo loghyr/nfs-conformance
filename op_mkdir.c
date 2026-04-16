@@ -7,20 +7,27 @@
  * Cases:
  *
  *   1. Basic mkdir succeeds, stat(d).st_mode has S_IFDIR.
+ *      (POSIX.1-1990 mkdir() S5.4.1)
  *
  *   2. mkdir with 0755 mode, verify the directory ends up with
  *      exactly those permission bits (subject to umask).  Use
  *      chmod() afterwards to force the mode we want independent of
  *      umask, then verify.
+ *      (POSIX.1-1990 mkdir() S5.4.1: "the permission bits shall be
+ *      set from mode modified by the process's umask")
  *
  *   3. mkdir over an existing directory returns -1/EEXIST.
+ *      (POSIX.1-1990 mkdir() S5.4.1: EEXIST error condition)
  *
  *   4. mkdir with a missing parent component returns -1/ENOENT.
+ *      (POSIX.1-1990 mkdir() S5.4.1: ENOENT error condition)
  *
  *   5. mkdirat(AT_FDCWD, ..., 0755) equivalent round-trip, to
  *      exercise the *at variant.
+ *      (POSIX.1-2008 mkdirat())
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-1990 S5.4.1 (mkdir) + POSIX.1-2008 (mkdirat)
+ * across Linux / FreeBSD / macOS / Solaris.
  *
  * Diagnostic value over TLS: CREATE(NF4DIR) is a mutating
  * directory op -- same authorization path as REMOVE and RENAME.

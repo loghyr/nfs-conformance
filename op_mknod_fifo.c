@@ -20,21 +20,31 @@
  * Cases:
  *
  *   1. mkfifo() basic: creates a FIFO; lstat() returns S_ISFIFO.
+ *      (POSIX.1-1990 mkfifo() S5.4.2)
  *
  *   2. Mode round-trip: mkfifo(path, 0640) then explicit chmod(0640);
  *      lstat() confirms the mode bits are preserved.
+ *      (POSIX.1-1990 mkfifo() S5.4.2: permission bits set from mode)
  *
  *   3. EEXIST: mkfifo() on an existing path returns -1/EEXIST.
+ *      (POSIX.1-1990 mkfifo() S5.4.2: EEXIST error condition)
  *
  *   4. Open for read (O_RDONLY|O_NONBLOCK): succeeds on POSIX without
  *      a writer present when O_NONBLOCK is set.
+ *      (POSIX.1-1990 open() S6.3.1: O_RDONLY|O_NONBLOCK on FIFO
+ *      returns immediately without blocking for a writer)
  *
  *   5. Open for write (O_WRONLY|O_NONBLOCK): POSIX mandates ENXIO
  *      when no reader is present and O_NONBLOCK is set.
+ *      (POSIX.1-1990 open() S6.3.1: "if O_NONBLOCK is set and no
+ *      process has the file open for reading, open() shall fail with
+ *      ENXIO")
  *
  *   6. unlink removes the FIFO: access() returns ENOENT after unlink.
+ *      (POSIX.1-1990 unlink() S5.5.1)
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-1990 S5.4.2 (mkfifo) + S6.3.1 (O_NONBLOCK FIFO)
+ * across Linux / FreeBSD / macOS / Solaris.
  *
  * Note: cases 4 and 5 open the FIFO on the NFS-mounted path; the
  * actual FIFO data path is client-local.  These cases test OPEN /

@@ -15,28 +15,35 @@
  *
  *   1. truncate-grow from empty: ftruncate(fd, 4 KiB) on a 0-byte
  *      file.  stat reports size=4096; read returns 4 KiB of zeros.
+ *      (POSIX.1-1990 XSI ftruncate() S5.6.7: "the extended area
+ *      shall appear as if it were zero-filled")
  *
  *   2. truncate-grow with prefix data: pwrite 1 KiB, ftruncate to
  *      4 KiB.  First 1 KiB is the pattern; remaining 3 KiB is zero.
+ *      (POSIX.1-1990 XSI ftruncate() S5.6.7: zero-fill on extend)
  *
  *   3. truncate-grow past an existing tail: pwrite 1 KiB, ftruncate
  *      to 64 KiB, then SEEK_HOLE from offset 1024 should land inside
  *      the created hole (either immediately or at a block boundary).
  *      Exercises that the server reports the extended region as
  *      sparse via SEEK_HOLE, complementing op_seek.
+ *      (POSIX.1-1990 XSI ftruncate() S5.6.7 zero-fill; SEEK_HOLE
+ *      is Linux / FreeBSD / macOS 10.15+ only)
  *
  *   4. truncate-grow-then-read beyond size: ftruncate to 4 KiB, read
  *      8 KiB; read should return exactly 4 KiB (EOF), not block or
  *      error.
+ *      (POSIX.1-1990 read() S6.4.1: EOF when offset >= file size)
  *
  *   5. truncate-grow over an existing fd with pending writes: pwrite
  *      1 KiB, ftruncate to 4 KiB, pwrite another 512 bytes inside
  *      the hole (at offset 2048).  fstat reports 4 KiB; the hole
  *      between offsets 1024 and 2048 should still read as zeros.
+ *      (POSIX.1-1990 XSI ftruncate() S5.6.7: zero-fill semantics)
  *
- * Portable: POSIX ftruncate is universal.  SEEK_HOLE in case 3 is
- * Linux / FreeBSD / macOS 10.15+.  If the platform lacks SEEK_HOLE,
- * case 3 is a degenerate size-check only.
+ * Portable: POSIX.1-1990 XSI ftruncate() S5.6.7 (zero-fill on
+ * extend) across Linux / FreeBSD / macOS / Solaris.  SEEK_HOLE in
+ * case 3 is Linux / FreeBSD / macOS 10.15+ only.
  */
 
 #define _POSIX_C_SOURCE 200809L

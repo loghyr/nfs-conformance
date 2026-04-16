@@ -8,20 +8,27 @@
  *
  *   1. Basic rmdir of an empty directory succeeds; the name is
  *      gone afterwards.
+ *      (POSIX.1-1990 rmdir() S5.5.2)
  *
  *   2. rmdir of a non-empty directory returns -1/ENOTEMPTY.  A few
  *      stacks historically returned EEXIST here; POSIX mandates
  *      ENOTEMPTY (or EEXIST per an older spec revision).  Accept
  *      either with a NOTE but prefer ENOTEMPTY.
+ *      (POSIX.1-1990 rmdir() S5.5.2: ENOTEMPTY; EEXIST permitted
+ *      as an alternative per the XSI extension)
  *
  *   3. rmdir of a nonexistent name returns -1/ENOENT.
+ *      (POSIX.1-1990 rmdir() S5.5.2: ENOENT error condition)
  *
  *   4. rmdir on a regular file returns -1/ENOTDIR.  Distinguishes
  *      REMOVE-for-dir from REMOVE-for-file in the server.
+ *      (POSIX.1-1990 rmdir() S5.5.2: ENOTDIR error condition)
  *
  *   5. unlinkat(AT_FDCWD, d, AT_REMOVEDIR) -- same op, *at variant.
+ *      (POSIX.1-2008 unlinkat() with AT_REMOVEDIR flag)
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-1990 S5.5.2 (rmdir) + POSIX.1-2008 (unlinkat)
+ * across Linux / FreeBSD / macOS / Solaris.
  *
  * Diagnostic value over TLS: rmdir is REMOVE on a directory target.
  * Along with op_rename_atomic, op_linkat case3, and op_symlink case6,

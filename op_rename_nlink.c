@@ -6,28 +6,46 @@
  *
  * op_rename_atomic tests the atomicity and data-preservation aspects
  * of rename.  This test focuses on the nlink bookkeeping that NFS
- * servers must get right for directories — the "." and ".." entries
+ * servers must get right for directories -- the "." and ".." entries
  * mean directory nlink is (2 + number_of_subdirectories), and
  * cross-parent renames must update BOTH parent directories' nlink.
+ *
+ * POSIX.1-2008 rename() requires (paraphrased):
+ *
+ *   - If old names a directory and new names an existing directory,
+ *     new shall be removed.  The directory containing old shall be
+ *     updated to reflect the change in the number of links.
+ *     (POSIX.1-2008 rename() description, Effects on Directory
+ *     Link Counts)
+ *
+ *   - Upon successful completion, rename() shall mark for update
+ *     the last data modification and last file status change
+ *     timestamps of the parent directory of each file.
+ *     (POSIX.1-2008 rename(), "Upon successful completion" clause)
  *
  * Cases:
  *
  *   1. Move directory cross-parent.  mkdir src/sub, mkdir dst.
  *      Rename src/sub to dst/sub.  Verify src nlink decrements
  *      by 1 and dst nlink increments by 1.
+ *      (POSIX.1-2008 rename(), directory link-count update rule)
  *
  *   2. Rename-replace directory.  mkdir p/a, mkdir p/b.  Rename
  *      p/a to p/b (replacing b).  Verify p nlink decrements by 1
  *      (net: one directory removed).
+ *      (POSIX.1-2008 rename(), directory link-count update rule)
  *
  *   3. Move regular file cross-parent.  Parent nlink must NOT
- *      change (only directories contribute to parent nlink).
+ *      change (only directories contribute to parent nlink via "..").
+ *      (POSIX.1-2008 rename(), directory link-count rule: only
+ *      directory entries via ".." affect parent nlink)
  *
  *   4. Parent mtime/ctime advance.  Both source and destination
  *      parent directories must have mtime/ctime advance after a
  *      cross-parent rename.
+ *      (POSIX.1-2008 rename(), "Upon successful completion" clause)
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-2008 rename() across Linux / FreeBSD / macOS / Solaris.
  */
 
 #define _GNU_SOURCE

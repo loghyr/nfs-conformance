@@ -15,9 +15,12 @@
  *      succeeds.  fcntl(F_GETLK) on the same region from the same
  *      process reports F_UNLCK (POSIX: self-locks are invisible to
  *      F_GETLK).  Unlock.
+ *      (POSIX.1-1990 fcntl() S6.5.2: "a process shall not be able
+ *      to detect its own lock")
  *
  *   2. Read-lock whole file.  Same round-trip as case 1 but with
  *      F_RDLCK.
+ *      (POSIX.1-1990 fcntl() S6.5.2)
  *
  *   3. Lock conflict detection.  Fork a child that write-locks
  *      bytes [0..511].  Parent tries F_SETLK (non-blocking)
@@ -25,26 +28,36 @@
  *      EACCES on some systems).  Parent then tries F_GETLK
  *      and expects the child's lock description back (pid, type,
  *      offset, length).  Child unlocks and exits.
+ *      (POSIX.1-1990 fcntl() S6.5.2: EAGAIN or EACCES on
+ *      conflicting non-blocking F_SETLK)
  *
  *   4. Non-overlapping locks.  Fork a child that write-locks
  *      [0..511].  Parent write-locks [512..1023].  Both should
  *      succeed (no conflict).  Both unlock.
+ *      (POSIX.1-1990 fcntl() S6.5.2: non-overlapping locks
+ *      from different processes must not conflict)
  *
  *   5. Read-lock sharing.  Fork a child that read-locks [0..511].
  *      Parent also read-locks [0..511].  Both should succeed
  *      (multiple readers allowed).  Both unlock.
+ *      (POSIX.1-1990 fcntl() S6.5.2: multiple F_RDLCK are
+ *      compatible with each other)
  *
  *   6. Upgrade read->write.  Take F_RDLCK on [0..511], then
  *      F_SETLK with F_WRLCK on same range.  Should succeed
  *      (atomic upgrade).  F_GETLK from same process shows F_UNLCK.
  *      Unlock.
+ *      (POSIX.1-1990 fcntl() S6.5.2: lock type replacement)
  *
  *   7. F_SETLKW blocking wait.  Fork a child that write-locks
  *      [0..511] for 1 second then unlocks.  Parent uses F_SETLKW
  *      (blocking) to request F_WRLCK on [0..511].  After child
  *      releases, parent should acquire the lock.
+ *      (POSIX.1-1990 fcntl() S6.5.2: F_SETLKW blocks until
+ *      the lock can be acquired)
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-1990 S6.5.2 (fcntl advisory record locking)
+ * across Linux / FreeBSD / macOS / Solaris.
  */
 
 #define _POSIX_C_SOURCE 200809L

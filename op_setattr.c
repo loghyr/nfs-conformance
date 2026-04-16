@@ -7,30 +7,42 @@
  * Cases:
  *
  *   1. chmod(0600) then stat -- st_mode & 0777 == 0600.
+ *      (POSIX.1-1990 chmod() S5.6.4)
  *
  *   2. chmod(0644) round-trip.  Catches servers that silently round
  *      to a default mask.
+ *      (POSIX.1-1990 chmod() S5.6.4)
  *
  *   3. truncate(0) on a file with content -- st_size becomes 0,
  *      subsequent read returns 0 bytes.
+ *      (POSIX.1-1990 XSI truncate() S5.6.7: "the file size shall
+ *      be set to length")
  *
  *   4. truncate(8192) grows the file; bytes beyond original EOF
  *      read as zeros (POSIX sparse-tail semantics, RFC 7862 S4 hole
  *      semantics).
+ *      (POSIX.1-1990 XSI truncate() S5.6.7: "if the file was
+ *      previously shorter than length, the extension shall read
+ *      as zeros")
  *
  *   5. chown(uid, gid) to the current values: always safe, should
  *      succeed even for non-root callers.  Catches servers that
  *      reject no-op ownership change requests.
+ *      (POSIX.1-1990 chown() S5.6.5)
  *
  *   6. utimensat(UTIME_NOW, UTIME_NOW): both mtime and atime should
  *      advance to a value >= the pre-call now.  Servers sometimes
  *      handle UTIME_NOW for one and not the other.
+ *      (POSIX.1-2008 utimensat() with UTIME_NOW)
  *
  *   7. utimensat(UTIME_OMIT, UTIME_OMIT): no-op.  POSIX requires
  *      success; NFSv4 SETATTR must send an empty attrmask and the
  *      server must accept it.  Historically buggy on several impls.
+ *      (POSIX.1-2008 utimensat() with UTIME_OMIT)
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-1990 S5.6.4 (chmod) + S5.6.5 (chown) + S5.6.7
+ * XSI (truncate) + POSIX.1-2008 (utimensat) across Linux / FreeBSD /
+ * macOS / Solaris.
  *
  * Diagnostic value: SETATTR is the one mutating op that does NOT
  * touch directory state.  If op_setattr passes under xprtsec=tls

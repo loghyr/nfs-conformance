@@ -14,13 +14,20 @@
  * Cases:
  *
  *   1. O_CREAT|O_EXCL on a nonexistent file: open() succeeds (fd >= 0).
+ *      (POSIX.1-1990 open() S6.3.1: O_CREAT|O_EXCL creates the file
+ *      exclusively, failing if it already exists)
  *
  *   2. O_CREAT|O_EXCL on an existing file: returns -1/EEXIST.
+ *      (POSIX.1-1990 open() S6.3.1: EEXIST when O_CREAT|O_EXCL and
+ *      the named file already exists)
  *
  *   3. File is zero-length after exclusive create: st_size == 0.
  *      The server must not leave garbage bytes in an exclusively-created
  *      file (regression check for servers that initialise from stale
  *      on-disk blocks).
+ *      (POSIX.1-1990 open() S6.3.1: O_CREAT creates a new file with
+ *      no initial content, so size is zero; O_TRUNC is not what
+ *      produces zero length here)
  *
  *   4. Write then read back: pwrite()/pread() through the exclusively
  *      opened fd round-trip correctly.  Exercises that the OPEN-created
@@ -28,8 +35,10 @@
  *
  *   5. openat(AT_FDCWD) variant: identical semantics to plain open(),
  *      exercising the *at form of the syscall.
+ *      (POSIX.1-2008 openat())
  *
- * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
+ * Portable: POSIX.1-1990 S6.3.1 (O_CREAT|O_EXCL) + POSIX.1-2008
+ * (openat) across Linux / FreeBSD / macOS / Solaris.
  */
 
 #define _POSIX_C_SOURCE 200809L
