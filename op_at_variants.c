@@ -238,7 +238,20 @@ static void case_fchownat(void)
 	uid_t myuid = getuid();
 	gid_t mygid = getgid();
 	if (fchownat(dirfd, "f", myuid, mygid, 0) != 0) {
+#ifdef __linux__
+		if (errno == EINVAL) {
+			if (!Sflag)
+				printf("NOTE: %s: case5 fchownat returned EINVAL "
+				       "(client-side idmap cannot resolve uid %u; "
+				       "start rpc.idmapd or set "
+				       "nfs4_disable_idmapping=Y)\n",
+				       myname, (unsigned)myuid);
+		} else {
+			complain("case5: fchownat: %s", strerror(errno));
+		}
+#else
 		complain("case5: fchownat: %s", strerror(errno));
+#endif
 		goto out;
 	}
 

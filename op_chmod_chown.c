@@ -186,7 +186,20 @@ static void case_chown_self(void)
 	gid_t mygid = getgid();
 
 	if (chown(a, myuid, mygid) != 0) {
+#ifdef __linux__
+		if (errno == EINVAL) {
+			if (!Sflag)
+				printf("NOTE: %s: case5 chown(self) returned EINVAL "
+				       "(client-side idmap cannot resolve uid %u; "
+				       "start rpc.idmapd or set "
+				       "nfs4_disable_idmapping=Y)\n",
+				       myname, (unsigned)myuid);
+		} else {
+			complain("case5: chown(self): %s", strerror(errno));
+		}
+#else
 		complain("case5: chown(self): %s", strerror(errno));
+#endif
 		unlink(a);
 		return;
 	}
@@ -227,7 +240,20 @@ static void case_chown_timestamps(void)
 
 	usleep(50000);
 	if (chown(a, getuid(), getgid()) != 0) {
+#ifdef __linux__
+		if (errno == EINVAL) {
+			if (!Sflag)
+				printf("NOTE: %s: case6 chown returned EINVAL "
+				       "(client-side idmap cannot resolve uid %u; "
+				       "start rpc.idmapd or set "
+				       "nfs4_disable_idmapping=Y)\n",
+				       myname, (unsigned)getuid());
+		} else {
+			complain("case6: chown: %s", strerror(errno));
+		}
+#else
 		complain("case6: chown: %s", strerror(errno));
+#endif
 		unlink(a);
 		return;
 	}

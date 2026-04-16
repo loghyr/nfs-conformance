@@ -351,9 +351,22 @@ static void case_uid_gid_preserved(void)
 	uid_t myuid = getuid();
 	gid_t mygid = getgid();
 
-	/* No-op chown to exercise SETATTR→GETATTR→VERIFY cycle. */
+	/* No-op chown to exercise SETATTR->GETATTR->VERIFY cycle. */
 	if (fchown(fd, myuid, mygid) != 0) {
+#ifdef __linux__
+		if (errno == EINVAL) {
+			if (!Sflag)
+				printf("NOTE: %s: case6 fchown returned EINVAL "
+				       "(client-side idmap cannot resolve uid %u; "
+				       "start rpc.idmapd or set "
+				       "nfs4_disable_idmapping=Y)\n",
+				       myname, (unsigned)myuid);
+		} else {
+			complain("case6: fchown: %s", strerror(errno));
+		}
+#else
 		complain("case6: fchown: %s", strerror(errno));
+#endif
 		close(fd);
 		unlink(name);
 		return;
