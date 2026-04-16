@@ -37,7 +37,7 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_symlink_nofollow op_rename_self op_at_variants \
         op_fdopendir op_read_write_large \
         op_stale_handle op_mmap_msync op_close_to_open \
-        op_noac op_root_squash \
+        op_noac op_root_squash op_rsize_wsize op_soft_timeout \
         op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write \
         op_server_caps
 
