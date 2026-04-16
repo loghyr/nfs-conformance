@@ -35,6 +35,7 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_commit op_truncate_grow op_unicode_names op_readdir_many \
         op_read_plus_sparse op_verify op_open_downgrade \
         op_symlink_nofollow op_rename_self op_at_variants \
+        op_fdopendir op_read_write_large \
         op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write \
         op_server_caps
 
