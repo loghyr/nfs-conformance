@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 909
 #
-# cthon26/nfsv42-tests: op_deleg_recall
+# nfs-conformance: op_deleg_recall
 #
 # NFSv4 delegation recall via CB_RECALL (RFC 5661 S20.3).  The
 # second-client recall case is skipped without -S SERVER.
 #
 . ./common/preamble
-_begin_fstest auto nfs cthon26
+_begin_fstest auto nfs nfs-conformance
 
 _cleanup()
 {
@@ -19,12 +19,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_deleg_recall
+_require_nfs_conformance_binary op_deleg_recall
 
-_cthon26_run op_deleg_recall
+_nfs_conformance_run op_deleg_recall
 
 status=0
 exit

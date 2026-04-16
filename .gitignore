@@ -1,38 +1,16 @@
-# Build artifacts
+# Build artifacts: every op_* binary but not the .c/.h sources.
+op_*
+!op_*.c
+!op_*.h
+
+# Helper probe binaries
 cb_getattr_probe
 cb_recall_probe
-op_allocate
-op_io_advise
-op_seek
-op_copy
-op_deallocate
-op_clone
-op_xattr
-op_statx_btime
-op_ofd_lock
-op_change_attr
-op_rename_atomic
-op_symlink
-op_linkat
-op_access
-op_setattr
-op_mkdir
-op_rmdir
-op_readdir
-op_open_excl
-op_mknod_fifo
-op_deleg_attr
-op_deleg_recall
-op_deleg_read
-op_server_caps
-op_commit
-op_truncate_grow
-op_unicode_names
-op_readdir_many
-op_read_plus_sparse
+
+# Compiler artifacts
 *.o
 *.dSYM/
 
-# Scratch files left if a test aborts before cleanup
+# Scratch files left behind if a test aborts before cleanup.
 t_*
 t1[0-5].*

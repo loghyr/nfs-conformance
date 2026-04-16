@@ -4,11 +4,9 @@
  * op_append.c -- exercise O_APPEND semantics over NFS (POSIX.1-1990,
  * IEEE Std 1003.1-1990 S6.3.1).
  *
- * O_APPEND has been in POSIX since the first edition (1990) yet the
- * original Connectathon NFS test suite (cthon04, 1986-2003) never
- * tested it.  This is a significant gap because O_APPEND requires
- * the kernel and NFS server to cooperate on atomic seek-to-end +
- * write:
+ * O_APPEND has been in POSIX since 1990 but is an under-tested
+ * corner of NFS behaviour.  The flag requires the kernel and the
+ * NFS server to cooperate on atomic seek-to-end + write:
  *
  *   "If the O_APPEND flag of the file status flags is set, the file
  *    offset shall be set to the end of the file prior to each write

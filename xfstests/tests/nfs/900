@@ -4,14 +4,14 @@
 #
 # FS QA Test No. 900
 #
-# cthon26/nfsv42-tests: op_access
+# nfs-conformance: op_access
 #
 # Exercises NFSv4 ACCESS (RFC 7530 S18.1) through the access(2) and
-# faccessat(2) POSIX surface.  Delegates to the cthon26 op_access
-# binary; see nfsv42-tests/op_access.c for the per-case details.
+# faccessat(2) POSIX surface.  Delegates to the nfs-conformance op_access
+# binary; see nfs-conformance/op_access.c for the per-case details.
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -20,12 +20,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_access
+_require_nfs_conformance_binary op_access
 
-_cthon26_run op_access
+_nfs_conformance_run op_access
 
 status=0
 exit

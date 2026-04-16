@@ -4,12 +4,12 @@
 #
 # FS QA Test No. 943
 #
-# cthon26/nfsv42-tests: op_fdopendir
+# nfs-conformance: op_fdopendir
 #
 # fdopendir(3) on NFS directory fds (POSIX.1-2008).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -18,12 +18,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_fdopendir
+_require_nfs_conformance_binary op_fdopendir
 
-_cthon26_run op_fdopendir
+_nfs_conformance_run op_fdopendir
 
 status=0
 exit

@@ -65,7 +65,7 @@
  *      PUTROOTFH + LOOKUP + GETATTR, which causes the server to issue
  *      CB_GETATTR to this client.  Verifies that the probe receives the
  *      delegated size (4096).  Silently skipped if cb_getattr_probe is not
- *      in PATH (install it from nfsv42-tests alongside this binary).
+ *      in PATH (install it from nfs-conformance alongside this binary).
  *
  *   8. Same-client thread stat.  pthread_create a worker that does
  *      stat(f) while the main thread holds the write delegation.  Because
@@ -559,7 +559,7 @@ static void case_cb_getattr(const char *server, const char *nfs_dir)
 	if (rc == 77) {
 		fprintf(stderr,
 			"NOTE: case7: cb_getattr_probe not in PATH "
-			"-- build nfsv42-tests and add to PATH\n");
+			"-- build nfs-conformance and add to PATH\n");
 		close(fd); unlink(f);
 		return; /* not a failure */
 	}

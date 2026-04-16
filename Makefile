@@ -1,28 +1,39 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
 #
-# Makefile -- build the NFSv4.2 extension tests.
+# Makefile -- build the nfs-conformance suite.
 #
 # Plain Make, no autotools.  Each test is a single .c file linked
-# against subr.o.
+# against subr.o, compiles to a standalone binary, and emits TAP13
+# when NFS_CONFORMANCE_TAP=1 is set in the environment.
 #
 # Targets:
-#   all      build every op_* binary
+#   all      build every op_* binary and the cb_* probe tools
 #   clean    remove binaries, objects, debug bundles
-#   check    build then ./runtests
-#   install  copy binaries into $(DESTDIR)$(libexecdir)/nfsv42-tests/
+#   check    build then run every test via `prove` (TAP aggregator)
+#   check-j  parallel run via `prove -j $(JOBS)`; see caveat below
+#   install  copy binaries into $(DESTDIR)$(libexecdir)/nfs-conformance/
+#   xfstests copy xfstests wrappers into $(XFSTESTS_DIR)
 #
 # Common variables you may override on the command line:
-#   CC, CFLAGS, LDFLAGS, PREFIX, DESTDIR, CHECK_DIR
+#   CC, CFLAGS, LDFLAGS, PREFIX, DESTDIR, CHECK_DIR, JOBS, XFSTESTS_DIR
 #
-#   CHECK_DIR  directory the test suite runs under; default "." (cwd).
-#              Set to an NFS mount path to test over NFS:
-#                 make check CHECK_DIR=/mnt/nfsv42
+#   CHECK_DIR     directory the test suite runs under; default "."
+#                 (cwd).  Set to an NFS mount to test over NFS:
+#                   make check CHECK_DIR=/mnt/nfs
+#
+#   JOBS          `check-j` parallelism; default 4.  Parallel runs on
+#                 the SAME mount are unsafe (tests share scratch-file
+#                 prefixes).  Use parallel only across independent
+#                 mounts, one process per mount.
+#
+#   XFSTESTS_DIR  destination xfstests tree for `make xfstests`
+#                 (e.g. /usr/src/xfstests-dev).
 
-CC        ?= cc
-CFLAGS    ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -std=gnu11
-LDFLAGS   ?=
-PREFIX    ?= /usr/local
+CC         ?= cc
+CFLAGS     ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -std=gnu11
+LDFLAGS    ?=
+PREFIX     ?= /usr/local
 libexecdir ?= $(PREFIX)/libexec
 
 TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
@@ -42,12 +53,14 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write \
         op_server_caps
 
-# Auxiliary probe tools (not run by runtests; used by individual tests).
+# Auxiliary probe tools (not invoked by `prove`; used by individual
+# tests as helpers and available for manual debugging).
 PROBES = cb_getattr_probe cb_recall_probe
 
 CHECK_DIR ?= .
+JOBS      ?= 4
 
-.PHONY: all clean check install
+.PHONY: all clean check check-j install xfstests
 
 all: $(TESTS) $(PROBES)
 
@@ -77,23 +90,26 @@ clean:
 	rm -f $(TESTS) $(PROBES) subr.o
 	rm -rf *.dSYM
 
+# Run every op_* via `prove` with TAP mode enabled.  Each binary
+# emits its own `1..N` plan; prove aggregates, surfacing ok / not ok
+# / skip counts.  Tests receive `-d $(CHECK_DIR)` via PROVE_ARGS so
+# they drive the chosen mount point.
 check: all
-	./runtests -d $(CHECK_DIR)
+	NFS_CONFORMANCE_TAP=1 prove -e '' $(addprefix ./,$(TESTS)) :: -d $(CHECK_DIR)
 
-# Emit TAP13 aggregate output; pipe to prove or tappy for structured
-# reporting.  Sequential (same -d mount) by design.
-check-tap: all
-	./runtests --tap -d $(CHECK_DIR)
-
-# Parallel runs via prove.  Assumes prove is installed and the caller
-# has enough independent -d mounts that tests do not collide on scratch
-# files; see runtests header for the single-mount caveat.
-# Override JOBS on the command line: `make check-prove JOBS=4`.
-JOBS ?= 4
-check-prove: all
-	NFSV42_TESTS_TAP=1 prove -j $(JOBS) -e '' ./op_*
+# Parallel variant.  Safe only across independent -d mounts; on a
+# single mount, tests collide on scratch-file prefixes.  Override:
+#   make check-j JOBS=8
+check-j: all
+	NFS_CONFORMANCE_TAP=1 prove -j $(JOBS) -e '' $(addprefix ./,$(TESTS)) :: -d $(CHECK_DIR)
 
 install: all
-	install -d $(DESTDIR)$(libexecdir)/nfsv42-tests
-	install -m 755 $(TESTS) $(PROBES) runtests \
-	        $(DESTDIR)$(libexecdir)/nfsv42-tests/
+	install -d $(DESTDIR)$(libexecdir)/nfs-conformance
+	install -m 755 $(TESTS) $(PROBES) \
+	        $(DESTDIR)$(libexecdir)/nfs-conformance/
+
+# Install xfstests wrappers into an xfstests source tree.
+#   make xfstests XFSTESTS_DIR=/usr/src/xfstests-dev
+xfstests:
+	@test -n "$(XFSTESTS_DIR)" || { echo "error: set XFSTESTS_DIR" >&2; exit 1; }
+	./xfstests/install.sh "$(XFSTESTS_DIR)"

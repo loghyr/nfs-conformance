@@ -4,12 +4,12 @@
 #
 # FS QA Test No. 945
 #
-# cthon26/nfsv42-tests: op_append
+# nfs-conformance: op_append
 #
 # O_APPEND atomic append semantics (POSIX.1-1990 S6.3.1).
 #
 . ./common/preamble
-_begin_fstest auto nfs cthon26
+_begin_fstest auto nfs nfs-conformance
 
 _cleanup()
 {
@@ -18,12 +18,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_append
+_require_nfs_conformance_binary op_append
 
-_cthon26_run op_append
+_nfs_conformance_run op_append
 
 status=0
 exit

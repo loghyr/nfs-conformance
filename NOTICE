@@ -1,7 +1,6 @@
-nfsv42-tests
+nfs-conformance
 Copyright 2026 Tom Haynes
 
-Inspired by the Connectathon NFS test suite (cthon04).  No cthon04
-code is incorporated; this is an independent implementation,
+An independent NFS protocol and POSIX-over-NFS conformance suite,
 dual-licensed as BSD-2-Clause OR GPL-2.0-only at the recipient's
 option.

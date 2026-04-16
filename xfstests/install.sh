@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
 #
-# install.sh -- copy (or symlink) cthon26 xfstests wrappers into an
+# install.sh -- copy (or symlink) nfs-conformance xfstests wrappers into an
 # existing xfstests checkout.
 #
 # Usage:
@@ -75,7 +75,7 @@ install_one() {
 }
 
 # Shared helper.
-install_one "$SCRIPT_DIR/common/cthon26" "$DEST/common/cthon26"
+install_one "$SCRIPT_DIR/common/nfs-conformance" "$DEST/common/nfs-conformance"
 
 # Test wrappers and their golden-output files.
 for f in "$SCRIPT_DIR"/tests/nfs/*; do
@@ -83,7 +83,7 @@ for f in "$SCRIPT_DIR"/tests/nfs/*; do
     install_one "$f" "$DEST/tests/nfs/$name"
     # Test wrappers need to be executable under copy mode.  In
     # symlink mode chmod follows the link and would modify the
-    # cthon26 source file, which is already executable in git --
+    # nfs-conformance source file, which is already executable in git --
     # skip the chmod so the source file's permissions stay pristine.
     if [ "$MODE" = copy ]; then
         case "$name" in
@@ -95,31 +95,31 @@ done
 
 # xfstests refuses to build tests/nfs/group.list if any group tag used
 # in a wrapper's _begin_fstest line is not documented in
-# doc/group-names.txt.  Register the cthon26 group so `make` succeeds
-# and `./check -g cthon26` works.
+# doc/group-names.txt.  Register the nfs-conformance group so `make` succeeds
+# and `./check -g nfs-conformance` works.
 GROUP_DOC="$DEST/doc/group-names.txt"
 if [ -f "$GROUP_DOC" ]; then
-    if grep -q '^cthon26[[:space:]]' "$GROUP_DOC"; then
+    if grep -q '^nfs-conformance[[:space:]]' "$GROUP_DOC"; then
         :
     elif [ $DRY -eq 1 ]; then
-        echo "would register: cthon26 group in $GROUP_DOC"
+        echo "would register: nfs-conformance group in $GROUP_DOC"
     else
-        printf 'cthon26\tcthon26 NFS conformance wrappers (out-of-tree)\n' \
+        printf 'nfs-conformance\tnfs-conformance NFS conformance wrappers (out-of-tree)\n' \
             >> "$GROUP_DOC"
     fi
 else
     echo "install.sh: warning: $GROUP_DOC not present;" \
-         "skipping cthon26 group registration -- \`make\` in" \
+         "skipping nfs-conformance group registration -- \`make\` in" \
          "xfstests will fail until the group is registered manually" >&2
 fi
 
 if [ $DRY -eq 0 ]; then
     n=$(ls "$SCRIPT_DIR/tests/nfs/" | grep -cEv '\.out$' || true)
-    echo "Installed common/cthon26 + $n test wrappers into $DEST"
+    echo "Installed common/nfs-conformance + $n test wrappers into $DEST"
     echo ""
     echo "Next steps:"
-    echo "  export CTHON26_BIN=/path/to/cthon26/nfsv42-tests"
+    echo "  export NFS_CONFORMANCE_BIN=/path/to/nfs-conformance"
     echo "  cd $DEST"
     echo "  make              # regenerate tests/nfs/group.list"
-    echo "  ./check -nfs -g cthon26"
+    echo "  ./check -nfs -g nfs-conformance"
 fi

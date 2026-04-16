@@ -39,7 +39,7 @@ extern int Sflag;
 /*
  * TAP13 output mode.
  *
- * Enabled when the environment variable NFSV42_TESTS_TAP is set to a
+ * Enabled when the environment variable NFS_CONFORMANCE_TAP is set to a
  * non-empty, non-"0" value.  In TAP mode each test binary emits a
  * self-contained TAP stream:
  *
@@ -62,7 +62,7 @@ static int tap_mode(void)
 {
 	static int cached = -1;
 	if (cached == -1) {
-		const char *e = getenv("NFSV42_TESTS_TAP");
+		const char *e = getenv("NFS_CONFORMANCE_TAP");
 		cached = (e && *e && !(e[0] == '0' && e[1] == '\0')) ? 1 : 0;
 	}
 	return cached;
@@ -184,6 +184,14 @@ void skip(const char *fmt, ...)
 			printf("\n");
 		}
 		fflush(stdout);
+		/*
+		 * In TAP mode the `1..0 # SKIP ...` plan (or the
+		 * `ok N ... # SKIP` line inside an ongoing plan) is
+		 * the authoritative result.  Exit 0 so prove does not
+		 * flag the binary as "non-zero exit status" on top of
+		 * the TAP-reported skip.
+		 */
+		exit(TEST_PASS);
 	} else {
 		fprintf(stdout, "SKIP: ");
 		va_start(ap, fmt);

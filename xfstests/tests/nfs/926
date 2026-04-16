@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 926
 #
-# cthon26/nfsv42-tests: op_truncate_grow
+# nfs-conformance: op_truncate_grow
 #
 # ftruncate extending a file -> NFSv4 SETATTR(size) with sparse hole
 # (RFC 7530 S5.8.1.5).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -19,12 +19,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_truncate_grow
+_require_nfs_conformance_binary op_truncate_grow
 
-_cthon26_run op_truncate_grow
+_nfs_conformance_run op_truncate_grow
 
 status=0
 exit

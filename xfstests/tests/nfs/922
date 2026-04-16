@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 922
 #
-# cthon26/nfsv42-tests: op_server_caps
+# nfs-conformance: op_server_caps
 #
 # EXCHANGE_ID / SECINFO_NO_NAME against an NFSv4.1 server (RFC 5661).
 # Requires CTHON26_NFS_SERVER in the environment; skips otherwise.
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -19,14 +19,14 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_server_caps
+_require_nfs_conformance_binary op_server_caps
 
 # op_server_caps needs -S SERVER; use CTHON26_NFS_SERVER if set.
 if [ -n "${CTHON26_NFS_SERVER:-}" ]; then
-	_cthon26_run_args op_server_caps -S "$CTHON26_NFS_SERVER"
+	_nfs_conformance_run_args op_server_caps -S "$CTHON26_NFS_SERVER"
 else
 	_notrun "op_server_caps needs -S SERVER; set CTHON26_NFS_SERVER to the NFS server hostname"
 fi

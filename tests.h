@@ -8,9 +8,8 @@
  *   - exit-code conventions (PASS=0, FAIL=1, SKIP=77, BUG=99) mirroring
  *     the GNU automake TESTS convention;
  *
- *   - a small common flag set (-h/-s/-t/-f/-n/-d) matching the
- *     Connectathon cthon04 flag shape so anyone coming from that
- *     test suite recognises the command-line grammar;
+ *   - a small common flag set (-h/-s/-t/-f/-n/-d) for uniform
+ *     command-line grammar across every test binary;
  *
  *   - the reporting and I/O helpers defined in subr.c.
  *
@@ -38,7 +37,7 @@
 
 /*
  * Common flags, declared by each test and parsed by each test's own
- * argv loop (hand-rolled to match cthon04's -h/-s/-t/-f/-n/-d shape).
+ * argv loop (hand-rolled -h/-s/-t/-f/-n/-d shape).
  *
  *   Hflag : -h  help requested
  *   Sflag : -s  silent; suppress non-error, non-result output
@@ -147,7 +146,7 @@ int all_zero(const unsigned char *buf, size_t n);
  * complain() calls between tap_case_begin() and tap_case_end() mark
  * THIS case as failed (in addition to the overall test_failed flag
  * that finish() honours).  tap_case_end() closes the scope and, when
- * running in TAP13 mode (NFSV42_TESTS_TAP env var set), emits one
+ * running in TAP13 mode (NFS_CONFORMANCE_TAP env var set), emits one
  * "ok N - name" or "not ok N - name" line.
  *
  * Outside TAP mode these helpers are no-ops for output but still

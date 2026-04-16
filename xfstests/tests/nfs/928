@@ -4,14 +4,14 @@
 #
 # FS QA Test No. 928
 #
-# cthon26/nfsv42-tests: op_xattr
+# nfs-conformance: op_xattr
 #
 # setxattr/getxattr/listxattr/removexattr on user.* namespace ->
 # NFSv4.2 XATTR ops (RFC 8276).  Skips on servers / backends that
 # do not support user.* xattrs.
 #
 . ./common/preamble
-_begin_fstest auto nfs cthon26
+_begin_fstest auto nfs nfs-conformance
 
 _cleanup()
 {
@@ -20,12 +20,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_xattr
+_require_nfs_conformance_binary op_xattr
 
-_cthon26_run op_xattr
+_nfs_conformance_run op_xattr
 
 status=0
 exit

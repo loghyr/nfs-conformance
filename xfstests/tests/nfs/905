@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 905
 #
-# cthon26/nfsv42-tests: op_copy
+# nfs-conformance: op_copy
 #
 # copy_file_range(2) -> NFSv4.2 COPY (RFC 7862 S7).  Copies multi-
 # megabyte files, hence not tagged quick.
 #
 . ./common/preamble
-_begin_fstest auto nfs cthon26
+_begin_fstest auto nfs nfs-conformance
 
 _cleanup()
 {
@@ -19,12 +19,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_copy
+_require_nfs_conformance_binary op_copy
 
-_cthon26_run op_copy
+_nfs_conformance_run op_copy
 
 status=0
 exit

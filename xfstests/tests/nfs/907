@@ -4,7 +4,7 @@
 #
 # FS QA Test No. 907
 #
-# cthon26/nfsv42-tests: op_deleg_attr
+# nfs-conformance: op_deleg_attr
 #
 # NFSv4 attribute tracking under write delegation (RFC 7530 S18.7 /
 # S20.1 CB_GETATTR).  Case 7 (CB_GETATTR via independent second
@@ -12,7 +12,7 @@
 # cb_getattr_probe is in PATH; the main six cases always run.
 #
 . ./common/preamble
-_begin_fstest auto nfs cthon26
+_begin_fstest auto nfs nfs-conformance
 
 _cleanup()
 {
@@ -21,12 +21,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_deleg_attr
+_require_nfs_conformance_binary op_deleg_attr
 
-_cthon26_run op_deleg_attr
+_nfs_conformance_run op_deleg_attr
 
 status=0
 exit

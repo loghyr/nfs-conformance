@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# common/nfs-conformance -- helpers shared by every nfs-conformance xfstests wrapper.
+#
+# Sourced by each wrapper after ./common/preamble and ./common/filter.
+# Provides:
+#
+#   _require_nfs_conformance_binary NAME
+#       Calls _notrun if $NFS_CONFORMANCE_BIN/NAME is not executable.  Exports
+#       NFS_CONFORMANCE_BIN so the wrapper can invoke it.  Default
+#       NFS_CONFORMANCE_BIN=/usr/local/lib/nfs-conformance mirrors `make install`.
+#
+#   _nfs_conformance_run NAME
+#       Runs "$NFS_CONFORMANCE_BIN/NAME -d $TEST_DIR -s", captures output, and
+#       translates nfs-conformance's 0/1/77/99 exit-code convention into
+#       xfstests idioms:
+#           rc==0   print "Silence is golden." (matches .out -> PASS)
+#           rc==77  call _notrun with the first SKIP reason
+#           rc!=0   echo captured output and exit non-zero
+#                   (xfstests' golden-diff reports FAIL)
+#
+#   _nfs_conformance_run_args NAME [extra args...]
+#       Same as _nfs_conformance_run but appends extra arguments after
+#       "-d $TEST_DIR -s".  Used by tests that need -S SERVER,
+#       -P NFSPATH_PREFIX, -m, etc.
+
+_require_nfs_conformance_binary()
+{
+	local bin="$1"
+	export NFS_CONFORMANCE_BIN="${NFS_CONFORMANCE_BIN:-/usr/local/lib/nfs-conformance}"
+	if [ ! -x "$NFS_CONFORMANCE_BIN/$bin" ]; then
+		_notrun "nfs-conformance binary '$bin' not found at $NFS_CONFORMANCE_BIN; set NFS_CONFORMANCE_BIN env var to the nfs-conformance build dir"
+	fi
+}
+
+_nfs_conformance_run_args()
+{
+	local bin="$1"
+	shift
+	local output rc reason
+	output=$("$NFS_CONFORMANCE_BIN/$bin" -d "$TEST_DIR" -s "$@" 2>&1)
+	rc=$?
+	if [ $rc -eq 77 ]; then
+		# First "SKIP: <reason>" line in captured output.
+		reason=$(echo "$output" | sed -n 's/^SKIP: //p' | head -1)
+		_notrun "${reason:-nfs-conformance $bin was skipped}"
+	fi
+	if [ $rc -ne 0 ]; then
+		# nfs-conformance printed FAIL lines to stderr (captured into output).
+		# Emit to test stdout so xfstests' golden diff shows them.
+		echo "$output"
+		status=$rc
+		exit
+	fi
+	echo "Silence is golden."
+}
+
+_nfs_conformance_run()
+{
+	_nfs_conformance_run_args "$1"
+}

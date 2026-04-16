@@ -4,14 +4,14 @@
 #
 # FS QA Test No. 906
 #
-# cthon26/nfsv42-tests: op_deallocate
+# nfs-conformance: op_deallocate
 #
 # fallocate(FALLOC_FL_PUNCH_HOLE) -> NFSv4.2 DEALLOCATE (RFC 7862 S4).
 # Linux-only; skips if the backing filesystem does not support
 # PUNCH_HOLE.
 #
 . ./common/preamble
-_begin_fstest auto nfs cthon26
+_begin_fstest auto nfs nfs-conformance
 
 _cleanup()
 {
@@ -20,12 +20,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_deallocate
+_require_nfs_conformance_binary op_deallocate
 
-_cthon26_run op_deallocate
+_nfs_conformance_run op_deallocate
 
 status=0
 exit

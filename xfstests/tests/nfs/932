@@ -4,12 +4,12 @@
 #
 # FS QA Test No. 932
 #
-# cthon26/nfsv42-tests: op_lookupp
+# nfs-conformance: op_lookupp
 #
 # stat(..) / openat(..) -> NFSv4 LOOKUPP (RFC 7530 S18.15).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -18,12 +18,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_lookupp
+_require_nfs_conformance_binary op_lookupp
 
-_cthon26_run op_lookupp
+_nfs_conformance_run op_lookupp
 
 status=0
 exit

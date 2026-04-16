@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 925
 #
-# cthon26/nfsv42-tests: op_symlink
+# nfs-conformance: op_symlink
 #
 # symlinkat/readlinkat -> NFSv4 SYMLINK/READLINK (RFC 7530 S18.22 /
 # S18.26).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -19,12 +19,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_symlink
+_require_nfs_conformance_binary op_symlink
 
-_cthon26_run op_symlink
+_nfs_conformance_run op_symlink
 
 status=0
 exit

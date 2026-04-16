@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 921
 #
-# cthon26/nfsv42-tests: op_seek
+# nfs-conformance: op_seek
 #
 # lseek(SEEK_HOLE/SEEK_DATA) -> NFSv4.2 SEEK + READ_PLUS.  Linux /
 # FreeBSD / macOS 10.15+; skips on platforms without SEEK_HOLE.
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -19,12 +19,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_seek
+_require_nfs_conformance_binary op_seek
 
-_cthon26_run op_seek
+_nfs_conformance_run op_seek
 
 status=0
 exit

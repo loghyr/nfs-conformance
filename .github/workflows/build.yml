@@ -3,17 +3,18 @@
 #
 # build.yml -- CI: build and run the suite on Linux and macOS.
 #
-# Linux runs the POSIX tests live (op_allocate, op_io_advise, op_seek)
-# against the GitHub runner's local filesystem.  op_copy runs against
-# tmpfs; op_deallocate runs against ext4; op_clone SKIPs because the
-# runner's FS is ext4 without reflink support -- that is correct and
-# expected behaviour.
+# Linux runs the portable tests against the GitHub runner's local
+# filesystem (ext4 by default).  Tests that require features the
+# runner does not have (reflink for op_clone, idmap for some
+# ownership tests) SKIP rather than fail -- that is the designed
+# behaviour.
 #
 # macOS exercises the compile-time skip stubs: every test compiles
-# cleanly and exits 77 at runtime.
+# cleanly and reports SKIP at runtime for platform-gated features
+# (O_DIRECT, O_TMPFILE, xattr, etc.).
 #
-# The runtests driver returns 0 for a mix of PASS + SKIP, which is
-# what both CI legs expect.
+# `make check` drives every test through `prove`; a mix of PASS +
+# SKIP returns 0 and is the expected green state for CI.
 
 name: build
 
@@ -31,7 +32,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: install prove (Perl TAP harness)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y perl
       - name: make
         run: make
-      - name: runtests
-        run: ./runtests
+      - name: make check
+        run: make check

@@ -4,12 +4,12 @@
 #
 # FS QA Test No. 950
 #
-# cthon26/nfsv42-tests: op_root_squash
+# nfs-conformance: op_root_squash
 #
 # root_squash NFS export behavior.
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -18,12 +18,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_root_squash
+_require_nfs_conformance_binary op_root_squash
 
-_cthon26_run op_root_squash
+_nfs_conformance_run op_root_squash
 
 status=0
 exit

@@ -35,7 +35,7 @@
  *     - [LINUX] cases: the Linux-extended outcome is acceptable
  *       (printed as NOTE); the POSIX-strict outcome is expected.
  *
- * Default is -L because cthon26 primarily targets Linux NFS testing.
+ * Default is -L because nfs-conformance primarily targets Linux NFS testing.
  *
  *
  * Background

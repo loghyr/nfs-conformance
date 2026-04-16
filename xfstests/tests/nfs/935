@@ -4,14 +4,14 @@
 #
 # FS QA Test No. 935
 #
-# cthon26/nfsv42-tests: op_owner_override
+# nfs-conformance: op_owner_override
 #
 # Linux owner-override semantics beyond strict POSIX: chmod/unlink/rename
 # on read-only files owned by the caller.  Exercises the NFS server paths
 # that git gc, editors, and package managers rely on.
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -20,12 +20,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_owner_override
+_require_nfs_conformance_binary op_owner_override
 
-_cthon26_run op_owner_override
+_nfs_conformance_run op_owner_override
 
 status=0
 exit

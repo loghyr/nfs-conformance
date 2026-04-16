@@ -4,12 +4,12 @@
 #
 # FS QA Test No. 949
 #
-# cthon26/nfsv42-tests: op_noac
+# nfs-conformance: op_noac
 #
 # noac mount option (no attribute caching).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -18,12 +18,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_noac
+_require_nfs_conformance_binary op_noac
 
-_cthon26_run op_noac
+_nfs_conformance_run op_noac
 
 status=0
 exit

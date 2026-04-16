@@ -4,12 +4,12 @@
 #
 # FS QA Test No. 946
 #
-# cthon26/nfsv42-tests: op_stale_handle
+# nfs-conformance: op_stale_handle
 #
 # ESTALE / stale file handle scenarios.
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -18,12 +18,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_stale_handle
+_require_nfs_conformance_binary op_stale_handle
 
-_cthon26_run op_stale_handle
+_nfs_conformance_run op_stale_handle
 
 status=0
 exit

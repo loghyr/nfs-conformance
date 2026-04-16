@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 920
 #
-# cthon26/nfsv42-tests: op_rmdir
+# nfs-conformance: op_rmdir
 #
 # rmdir/unlinkat(AT_REMOVEDIR) -> NFSv4 REMOVE on dir (RFC 7530
 # S18.25).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -19,12 +19,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_rmdir
+_require_nfs_conformance_binary op_rmdir
 
-_cthon26_run op_rmdir
+_nfs_conformance_run op_rmdir
 
 status=0
 exit

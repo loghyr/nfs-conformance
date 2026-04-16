@@ -4,12 +4,12 @@
 #
 # FS QA Test No. 944
 #
-# cthon26/nfsv42-tests: op_read_write_large
+# nfs-conformance: op_read_write_large
 #
 # large READ/WRITE sizes and offsets (>4 GiB, multi-MiB, unaligned).
 #
 . ./common/preamble
-_begin_fstest auto nfs cthon26
+_begin_fstest auto nfs nfs-conformance
 
 _cleanup()
 {
@@ -18,12 +18,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_read_write_large
+_require_nfs_conformance_binary op_read_write_large
 
-_cthon26_run op_read_write_large
+_nfs_conformance_run op_read_write_large
 
 status=0
 exit

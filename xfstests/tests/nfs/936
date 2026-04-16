@@ -4,12 +4,12 @@
 #
 # FS QA Test No. 936
 #
-# cthon26/nfsv42-tests: op_unlink
+# nfs-conformance: op_unlink
 #
 # unlink -> NFSv4 REMOVE (RFC 7530 S18.25).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -18,12 +18,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_unlink
+_require_nfs_conformance_binary op_unlink
 
-_cthon26_run op_unlink
+_nfs_conformance_run op_unlink
 
 status=0
 exit

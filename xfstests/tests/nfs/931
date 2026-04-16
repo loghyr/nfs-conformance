@@ -4,12 +4,12 @@
 #
 # FS QA Test No. 931
 #
-# cthon26/nfsv42-tests: op_delegation_write
+# nfs-conformance: op_delegation_write
 #
 # open/write/close -> NFSv4 OPEN_DELEGATE_WRITE (RFC 8881 S10.4).
 #
 . ./common/preamble
-_begin_fstest auto nfs cthon26
+_begin_fstest auto nfs nfs-conformance
 
 _cleanup()
 {
@@ -18,12 +18,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_delegation_write
+_require_nfs_conformance_binary op_delegation_write
 
-_cthon26_run op_delegation_write
+_nfs_conformance_run op_delegation_write
 
 status=0
 exit

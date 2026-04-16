@@ -4,12 +4,12 @@
 #
 # FS QA Test No. 910
 #
-# cthon26/nfsv42-tests: op_io_advise
+# nfs-conformance: op_io_advise
 #
 # posix_fadvise(2) -> NFSv4.2 IO_ADVISE (RFC 7862 S5).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -18,12 +18,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_io_advise
+_require_nfs_conformance_binary op_io_advise
 
-_cthon26_run op_io_advise
+_nfs_conformance_run op_io_advise
 
 status=0
 exit

@@ -221,7 +221,7 @@ static void case_recall(const char *server, const char *nfs_dir)
 	if (rc == 77) {
 		fprintf(stderr,
 			"NOTE: case2: cb_recall_probe not in PATH "
-			"-- build nfsv42-tests and add to PATH\n");
+			"-- build nfs-conformance and add to PATH\n");
 		close(fd); unlink(f);
 		return;
 	}

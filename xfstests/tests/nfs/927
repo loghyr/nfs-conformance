@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 927
 #
-# cthon26/nfsv42-tests: op_unicode_names
+# nfs-conformance: op_unicode_names
 #
 # UTF-8 filenames (Latin-1 / CJK / emoji) -> NFSv4 name encoding
 # (RFC 7530 S1.4.2).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -19,12 +19,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_unicode_names
+_require_nfs_conformance_binary op_unicode_names
 
-_cthon26_run op_unicode_names
+_nfs_conformance_run op_unicode_names
 
 status=0
 exit

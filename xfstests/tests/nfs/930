@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 930
 #
-# cthon26/nfsv42-tests: op_lock
+# nfs-conformance: op_lock
 #
 # fcntl(F_SETLK/F_GETLK) -> NFSv4 LOCK/LOCKU/LOCKT (RFC 7530
 # S18.10-12).
 #
 . ./common/preamble
-_begin_fstest auto nfs cthon26
+_begin_fstest auto nfs nfs-conformance
 
 _cleanup()
 {
@@ -19,12 +19,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_lock
+_require_nfs_conformance_binary op_lock
 
-_cthon26_run op_lock
+_nfs_conformance_run op_lock
 
 status=0
 exit

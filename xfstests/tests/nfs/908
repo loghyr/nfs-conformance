@@ -4,14 +4,14 @@
 #
 # FS QA Test No. 908
 #
-# cthon26/nfsv42-tests: op_deleg_read
+# nfs-conformance: op_deleg_read
 #
 # NFSv4 read delegation + CB_RECALL on conflicting write (RFC 7530
 # S10.4.2).  Cross-client cases 2 and 3 are skipped without -S SERVER;
 # the local shared-read case always runs.
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -20,12 +20,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_deleg_read
+_require_nfs_conformance_binary op_deleg_read
 
-_cthon26_run op_deleg_read
+_nfs_conformance_run op_deleg_read
 
 status=0
 exit

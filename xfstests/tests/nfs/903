@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 903
 #
-# cthon26/nfsv42-tests: op_clone
+# nfs-conformance: op_clone
 #
 # ioctl(FICLONE) -> NFSv4.2 CLONE (RFC 7862 S11).  Requires a reflink-
 # capable backing filesystem on the server; skips otherwise.
 #
 . ./common/preamble
-_begin_fstest auto nfs cthon26
+_begin_fstest auto nfs nfs-conformance
 
 _cleanup()
 {
@@ -19,12 +19,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_clone
+_require_nfs_conformance_binary op_clone
 
-_cthon26_run op_clone
+_nfs_conformance_run op_clone
 
 status=0
 exit

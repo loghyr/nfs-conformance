@@ -3,19 +3,20 @@ SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
 -->
 
-# nfsv42-tests
+# nfs-conformance
 
-Syscall-level tests for NFSv4.2 extensions (RFC 7862) that post-date
-the most recent active development cycle of the Connectathon NFS test
-suite.  Each test is a standalone C program, uses the Connectathon
-`-h/-s/-t/-f/-n/-d` flag conventions, and exits `0/1/77/99` (PASS /
-FAIL / SKIP / BUG, the GNU automake TESTS convention).
+Syscall-level conformance tests for NFS servers: NFSv4.2 extensions
+(RFC 7862), NFSv4 baseline ops, POSIX file semantics over NFS, and
+NFS-specific client behaviour (close-to-open, cache bypass, mount
+options, open flags).  Each test is a standalone C program, emits
+TAP13 when `NFS_CONFORMANCE_TAP=1` is set, and exits `0/1/77/99`
+(PASS / FAIL / SKIP / BUG, the GNU automake TESTS convention).
 
 ## Scope
 
-Each test drives the NFSv4.2 op under test via its portable userspace
-equivalent.  If the userspace equivalent is unavailable on the
-running system, the test SKIPs instead of failing.
+Each test drives the op under test via its portable userspace
+equivalent.  If the equivalent is unavailable on the running system,
+the test SKIPs instead of failing.
 
 ### NFSv4.2 (RFC 7862)
 
@@ -46,7 +47,7 @@ NFSv4.1's marquee additions (sessions, pNFS, EXCHANGE_ID / CREATE_SESSION, SECIN
 
 ### NFSv4 baseline ops
 
-Bread-and-butter NFSv4 ops that predate v4.1 but matter for every server.  Cthon04 covers some of these; these tests are a modern, at-syscall-API flavour focused on edge cases that catch real bugs.
+Bread-and-butter NFSv4 ops that predate v4.1 but matter for every server, exercised at the syscall-API boundary with a focus on edge cases that catch real bugs.
 
 | Test | Op | Userspace API | Portability |
 |---|---|---|---|
@@ -83,8 +84,8 @@ Bread-and-butter NFSv4 ops that predate v4.1 but matter for every server.  Cthon
 
 ### POSIX.1-2008/2024 conformance
 
-Tests for specific POSIX features introduced since the original cthon04
-suite, targeting NFS server areas that historically have conformance gaps.
+Tests for specific POSIX features (POSIX.1-2008 / POSIX.1-2024)
+targeting NFS server areas that historically have conformance gaps.
 
 | Test | Feature | Userspace API | Portability |
 |---|---|---|---|
@@ -182,7 +183,7 @@ exit `77` at runtime.  `op_seek` runs on macOS 10.15+.
 ./op_allocate [-h|-s|-t|-f|-n] [-d mountpoint]
 ```
 
-Flags (matching Connectathon cthon04 conventions):
+Flags:
 
 | Flag | Meaning |
 |---|---|
@@ -195,13 +196,9 @@ Flags (matching Connectathon cthon04 conventions):
 
 ## Running the whole suite
 
-```
-./runtests [-d mountpoint]
-```
-
-Invokes all six tests in order.  Exit status summarises the worst
-individual result.  Output is line-per-test so it can be wrapped by
-external CI harnesses.
+`make check` drives every test through `prove` (Perl's TAP
+aggregator), which reads each binary's TAP13 stream and summarises
+ok / not ok / skip counts.
 
 Typical use against an NFSv4.2 mount:
 
@@ -210,47 +207,40 @@ sudo mount -t nfs -o vers=4.2 server:/export /mnt/nfs42
 make check CHECK_DIR=/mnt/nfs42
 ```
 
+Under the hood this is:
+
+```
+NFS_CONFORMANCE_TAP=1 prove -e '' ./op_* :: -d /mnt/nfs42
+```
+
+Parallel runs across independent mounts (`make check-j JOBS=N`) are
+safe only when each prove slot is passed a *different* `-d` — tests
+share scratch-file prefixes and collide on a single mount.  For
+single-mount use, stay sequential.
+
 ## TAP13 output
 
-Every test binary and `runtests` itself can emit TAP13 (Test Anything
-Protocol), so results are consumable by `prove`, `tappy`, and any CI
-system that speaks TAP.  Deep-dive guide with CI examples and
-troubleshooting: [`../docs/tap.md`](../docs/tap.md).
-
-Three entry points:
+Every test binary can emit TAP13 (Test Anything Protocol), so results
+are consumable by `prove`, `tappy`, and any CI system that speaks TAP:
 
 ```
-# Aggregated meta-TAP, sequential, no external deps:
-./runtests --tap -d /mnt/nfs42
-# Equivalent:
-make check-tap CHECK_DIR=/mnt/nfs42
-
-# Parallel runs via prove (one binary per slot).  Each binary emits
-# its own "1..1" TAP stream via the NFSV42_TESTS_TAP environment
-# variable; prove aggregates across binaries.  Only safe when
-# separate -d mounts are passed per binary -- parallel runs against
-# the SAME mount collide on scratch filenames:
-NFSV42_TESTS_TAP=1 prove -j $(nproc) -e '' ./op_*
-# Equivalent:
-make check-prove JOBS=$(nproc)
-
 # Single binary, raw TAP (useful for scripting):
-NFSV42_TESTS_TAP=1 ./op_commit -d /mnt/nfs42
+NFS_CONFORMANCE_TAP=1 ./op_commit -d /mnt/nfs42
 ```
 
-Each binary in TAP mode is one test: one `1..1` plan line plus one
-`ok`/`not ok`/`# SKIP` result.  Case-level granularity (one result per
-`case_foo`) is a planned refinement; keeping the harness change small
-kept Phase 1 to one subr.c edit.
+In TAP mode each binary is one test with a `1..N` plan line where N
+is the number of cases, followed by one `ok N - case_foo` or
+`not ok N - case_foo` per case.  `prove` aggregates case-level results
+across all binaries.
 
 ## Interpreting environmental NOTEs
 
-In the Connectathon tradition, mount options and server configuration are
-tester decisions, not test decisions.  The tests do not try to auto-fix
-your environment — they run what you give them, report clearly when a
-failure is environmental rather than server- or client-code-level, and
-let you decide whether to change mount options, idmap, Kerberos, TLS, or
-the test scope.
+Mount options and server configuration are tester decisions, not
+test decisions.  The tests do not try to auto-fix your environment —
+they run what you give them, report clearly when a failure is
+environmental rather than server- or client-code-level, and let you
+decide whether to change mount options, idmap, Kerberos, TLS, or the
+test scope.
 
 This section documents recurring `NOTE:` and `SKIP:` messages whose root
 cause is configuration rather than a defect in the code under test.
@@ -322,7 +312,7 @@ ticket:
 ```
 kinit user@YOUR.REALM
 klist                    # verify Default principal: user@YOUR.REALM
-./runtests -d /mnt/...
+make check CHECK_DIR=/mnt/...
 ```
 
 A cache that contains only a service principal (`nfs/host.domain@REALM`)
@@ -375,9 +365,9 @@ bumps it and turns the assertion into a false positive.  `-m` is
 opt-in precisely so the tester is explicitly acknowledging that the
 mount is quiet for the duration of the test.
 
-Developers who like to run cthon-style tests in parallel: do not
-pass `-m` unless you serialise op_deleg_attr with `flock` or a
-lockfile on the mountpoint.  Without `-m` the case still runs and
+If you run the suite in parallel: do not pass `-m` unless you
+serialise op_deleg_attr with `flock` or a lockfile on the
+mountpoint.  Without `-m` the case still runs and
 still verifies attribute correctness (the useful positive signal).
 `-m` is Linux-only (`/proc/self/mountstats`); on other platforms the
 flag is accepted but silently downgrades to lenient mode with a
@@ -387,15 +377,29 @@ NOTE.  Invoke as:
 ./op_deleg_attr -m -d /mnt/nfs
 ```
 
-## Exit codes
+## Exit codes (per test binary)
 
 | Code | Meaning |
 |---|---|
 | `0` | PASS |
-| `1` | FAIL — at least one test verified a wrong result |
+| `1` | FAIL — at least one case verified a wrong result |
 | `77` | SKIP — feature not available on this kernel / filesystem |
-| `98` | MISS — at least one test binary was not built |
-| `99` | BUG — a test exited with an unexpected code |
+| `99` | BUG — test exited unexpectedly (crash, abort, etc.) |
+
+## xfstests integration
+
+The `xfstests/` subdirectory ships wrapper scripts that expose every
+`op_*` binary as an xfstests test in the `nfs-conformance` group.
+To integrate into an existing xfstests tree:
+
+```
+make xfstests XFSTESTS_DIR=/usr/src/xfstests-dev
+cd /usr/src/xfstests-dev && sudo ./check -nfs -g nfs-conformance
+```
+
+The install script copies wrappers into `tests/nfs/`, registers the
+`nfs-conformance` group in `doc/group-names.txt`, and prints the
+`make` command to regenerate `tests/nfs/group.list`.
 
 ## License
 

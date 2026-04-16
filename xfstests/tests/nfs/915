@@ -4,13 +4,13 @@
 #
 # FS QA Test No. 915
 #
-# cthon26/nfsv42-tests: op_open_excl
+# nfs-conformance: op_open_excl
 #
 # O_CREAT|O_EXCL -> NFSv4 OPEN createmode=EXCLUSIVE4_1 (RFC 7530
 # S18.16).
 #
 . ./common/preamble
-_begin_fstest auto nfs quick cthon26
+_begin_fstest auto nfs quick nfs-conformance
 
 _cleanup()
 {
@@ -19,12 +19,12 @@ _cleanup()
 }
 
 . ./common/filter
-. ./common/cthon26
+. ./common/nfs-conformance
 
 _require_test
-_require_cthon26_binary op_open_excl
+_require_nfs_conformance_binary op_open_excl
 
-_cthon26_run op_open_excl
+_nfs_conformance_run op_open_excl
 
 status=0
 exit
