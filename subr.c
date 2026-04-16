@@ -402,3 +402,188 @@ int all_zero(const unsigned char *buf, size_t n)
 			return 0;
 	return 1;
 }
+
+/*
+ * mount_has_option -- check whether the filesystem at cwd was mounted
+ * with a given option (e.g., "noac", "soft", "vers=4.2").
+ *
+ * Returns  1 if the option is present in the mount options string.
+ * Returns  0 if the option is absent.
+ * Returns -1 if mount option detection is not supported (non-Linux).
+ *
+ * On Linux, parses /proc/self/mountinfo to find the mount entry whose
+ * mount point matches cwd (longest prefix match on st_dev).  The
+ * "super options" field (field 11+, after the " - " separator) and
+ * the "mount options" field (field 6) are both searched.
+ */
+int mount_has_option(const char *opt)
+{
+#ifndef __linux__
+	(void)opt;
+	return -1;
+#else
+	struct stat st_cwd;
+	if (stat(".", &st_cwd) != 0)
+		return -1;
+
+	FILE *fp = fopen("/proc/self/mountinfo", "r");
+	if (!fp)
+		return -1;
+
+	char line[4096];
+	int found = -1;
+
+	while (fgets(line, sizeof(line), fp)) {
+		/*
+		 * mountinfo format (space-separated):
+		 *   0: mount_id
+		 *   1: parent_id
+		 *   2: major:minor
+		 *   3: root
+		 *   4: mount_point
+		 *   5: mount_options
+		 *   6..N-1: optional fields (tag:value)
+		 *   N: separator "-"
+		 *   N+1: fs_type
+		 *   N+2: mount_source
+		 *   N+3: super_options
+		 */
+		unsigned int major, minor;
+		char mount_point[2048];
+		char mount_opts[2048];
+
+		if (sscanf(line, "%*d %*d %u:%u %*s %2047s %2047s",
+			   &major, &minor, mount_point, mount_opts) < 4)
+			continue;
+
+		dev_t dev = makedev(major, minor);
+		if (dev != st_cwd.st_dev)
+			continue;
+
+		/* Check mount_options (field 6). */
+		char search[256];
+		snprintf(search, sizeof(search), "%s", opt);
+
+		char *p = mount_opts;
+		char *tok;
+		while ((tok = strsep(&p, ",")) != NULL) {
+			if (strcmp(tok, search) == 0) {
+				found = 1;
+				goto done;
+			}
+		}
+
+		/* Check super_options (after " - " separator). */
+		char *sep = strstr(line, " - ");
+		if (sep) {
+			char *super = sep + 3;
+			/* Skip fs_type and mount_source. */
+			char *sp1 = strchr(super, ' ');
+			if (sp1) {
+				char *sp2 = strchr(sp1 + 1, ' ');
+				if (sp2) {
+					sp2++;
+					/* sp2 points at super_options. */
+					char so[2048];
+					snprintf(so, sizeof(so), "%s", sp2);
+					/* Remove trailing newline. */
+					char *nl = strchr(so, '\n');
+					if (nl) *nl = '\0';
+
+					char *q = so;
+					while ((tok = strsep(&q, ",")) != NULL) {
+						if (strcmp(tok, search) == 0) {
+							found = 1;
+							goto done;
+						}
+					}
+				}
+			}
+		}
+
+		found = 0;
+		break;
+	}
+
+done:
+	fclose(fp);
+	return found;
+#endif
+}
+
+/*
+ * mount_get_option_value -- extract the numeric value of a key=value
+ * mount option (e.g., "rsize" -> 1048576).
+ *
+ * Returns the value on success, 0 if not found, -1 if unsupported.
+ */
+long mount_get_option_value(const char *key)
+{
+#ifndef __linux__
+	(void)key;
+	return -1;
+#else
+	struct stat st_cwd;
+	if (stat(".", &st_cwd) != 0)
+		return -1;
+
+	FILE *fp = fopen("/proc/self/mountinfo", "r");
+	if (!fp)
+		return -1;
+
+	char line[4096];
+	long result = 0;
+	size_t keylen = strlen(key);
+
+	while (fgets(line, sizeof(line), fp)) {
+		unsigned int major, minor;
+		char mount_opts[2048];
+
+		if (sscanf(line, "%*d %*d %u:%u %*s %*s %2047s",
+			   &major, &minor, mount_opts) < 3)
+			continue;
+
+		dev_t dev = makedev(major, minor);
+		if (dev != st_cwd.st_dev)
+			continue;
+
+		/* Search mount_options and super_options for key=value. */
+		char *sources[2] = { mount_opts, NULL };
+
+		char *sep = strstr(line, " - ");
+		if (sep) {
+			char *sp1 = strchr(sep + 3, ' ');
+			if (sp1) {
+				char *sp2 = strchr(sp1 + 1, ' ');
+				if (sp2) {
+					sp2++;
+					char *nl = strchr(sp2, '\n');
+					if (nl) *nl = '\0';
+					sources[1] = sp2;
+				}
+			}
+		}
+
+		for (int s = 0; s < 2; s++) {
+			if (!sources[s]) continue;
+			char buf[2048];
+			snprintf(buf, sizeof(buf), "%s", sources[s]);
+			char *p = buf;
+			char *tok;
+			while ((tok = strsep(&p, ",")) != NULL) {
+				if (strncmp(tok, key, keylen) == 0 &&
+				    tok[keylen] == '=') {
+					result = strtol(tok + keylen + 1,
+							NULL, 10);
+					goto done;
+				}
+			}
+		}
+		break;
+	}
+
+done:
+	fclose(fp);
+	return result;
+#endif
+}

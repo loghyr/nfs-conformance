@@ -181,4 +181,18 @@ void tap_case_end(void);
 #define RUN_CASE(name, call) \
 	do { tap_case_begin(name); call; tap_case_end(); } while (0)
 
+/*
+ * mount_has_option -- check whether the filesystem at cwd was mounted
+ * with a given option (e.g., "noac", "soft").
+ * Returns 1 if present, 0 if absent, -1 if detection unsupported.
+ */
+int mount_has_option(const char *opt);
+
+/*
+ * mount_get_option_value -- extract the numeric value of a key=value
+ * mount option (e.g., "rsize" -> 1048576).
+ * Returns the value on success, 0 if not found, -1 if unsupported.
+ */
+long mount_get_option_value(const char *key);
+
 #endif /* NFSV42_TESTS_H */
