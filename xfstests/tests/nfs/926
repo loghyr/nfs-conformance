@@ -1,0 +1,30 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 926
+#
+# cthon26/nfsv42-tests: op_truncate_grow
+#
+# ftruncate extending a file -> NFSv4 SETATTR(size) with sparse hole
+# (RFC 7530 S5.8.1.5).
+#
+. ./common/preamble
+_begin_fstest auto nfs quick cthon26
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_require_test
+_require_cthon26_binary op_truncate_grow
+
+_cthon26_run op_truncate_grow
+
+status=0
+exit

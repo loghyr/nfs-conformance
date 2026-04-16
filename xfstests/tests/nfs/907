@@ -1,0 +1,32 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 907
+#
+# cthon26/nfsv42-tests: op_deleg_attr
+#
+# NFSv4 attribute tracking under write delegation (RFC 7530 S18.7 /
+# S20.1 CB_GETATTR).  Case 7 (CB_GETATTR via independent second
+# client) is skipped unless CTHON26_NFS_SERVER is set and
+# cb_getattr_probe is in PATH; the main six cases always run.
+#
+. ./common/preamble
+_begin_fstest auto nfs cthon26
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_require_test
+_require_cthon26_binary op_deleg_attr
+
+_cthon26_run op_deleg_attr
+
+status=0
+exit

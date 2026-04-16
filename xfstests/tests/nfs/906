@@ -1,0 +1,31 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 906
+#
+# cthon26/nfsv42-tests: op_deallocate
+#
+# fallocate(FALLOC_FL_PUNCH_HOLE) -> NFSv4.2 DEALLOCATE (RFC 7862 S4).
+# Linux-only; skips if the backing filesystem does not support
+# PUNCH_HOLE.
+#
+. ./common/preamble
+_begin_fstest auto nfs cthon26
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_require_test
+_require_cthon26_binary op_deallocate
+
+_cthon26_run op_deallocate
+
+status=0
+exit

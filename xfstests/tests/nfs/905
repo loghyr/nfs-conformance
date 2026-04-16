@@ -1,0 +1,30 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 905
+#
+# cthon26/nfsv42-tests: op_copy
+#
+# copy_file_range(2) -> NFSv4.2 COPY (RFC 7862 S7).  Copies multi-
+# megabyte files, hence not tagged quick.
+#
+. ./common/preamble
+_begin_fstest auto nfs cthon26
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_require_test
+_require_cthon26_binary op_copy
+
+_cthon26_run op_copy
+
+status=0
+exit

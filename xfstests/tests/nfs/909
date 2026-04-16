@@ -1,0 +1,30 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 909
+#
+# cthon26/nfsv42-tests: op_deleg_recall
+#
+# NFSv4 delegation recall via CB_RECALL (RFC 5661 S20.3).  The
+# second-client recall case is skipped without -S SERVER.
+#
+. ./common/preamble
+_begin_fstest auto nfs cthon26
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_require_test
+_require_cthon26_binary op_deleg_recall
+
+_cthon26_run op_deleg_recall
+
+status=0
+exit

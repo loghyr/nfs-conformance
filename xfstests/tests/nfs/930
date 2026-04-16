@@ -1,0 +1,30 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 930
+#
+# cthon26/nfsv42-tests: op_lock
+#
+# fcntl(F_SETLK/F_GETLK) -> NFSv4 LOCK/LOCKU/LOCKT (RFC 7530
+# S18.10-12).
+#
+. ./common/preamble
+_begin_fstest auto nfs cthon26
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_require_test
+_require_cthon26_binary op_lock
+
+_cthon26_run op_lock
+
+status=0
+exit

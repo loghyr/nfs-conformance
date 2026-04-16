@@ -1,0 +1,30 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 914
+#
+# cthon26/nfsv42-tests: op_ofd_lock
+#
+# fcntl(F_OFD_SETLK) -> NFSv4.1 LOCK/LOCKU with OFD-scoped stateids
+# (RFC 5661).  Linux 3.15+ only.
+#
+. ./common/preamble
+_begin_fstest auto nfs quick cthon26
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_require_test
+_require_cthon26_binary op_ofd_lock
+
+_cthon26_run op_ofd_lock
+
+status=0
+exit

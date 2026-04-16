@@ -1,0 +1,31 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only
+#
+# FS QA Test No. 919
+#
+# cthon26/nfsv42-tests: op_rename_atomic
+#
+# renameat2 atomic flags (RENAME_NOREPLACE, RENAME_EXCHANGE) ->
+# NFSv4 RENAME semantics.  Linux NFS client 6.1+ for flag passthrough;
+# skips otherwise.
+#
+. ./common/preamble
+_begin_fstest auto nfs quick cthon26
+
+_cleanup()
+{
+	cd /
+	rm -rf $tmp.*
+}
+
+. ./common/filter
+. ./common/cthon26
+
+_require_test
+_require_cthon26_binary op_rename_atomic
+
+_cthon26_run op_rename_atomic
+
+status=0
+exit
