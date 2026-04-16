@@ -77,7 +77,7 @@ if [ -z "$SELECTED" ]; then
               op_owner_override op_unlink op_chmod_chown op_utimensat \
               op_rename_nlink \
               op_readdir op_open_excl op_mknod_fifo \
-              op_commit op_truncate_grow op_unicode_names op_readdir_many \
+              op_commit op_truncate_grow op_unicode_names op_readdir_many op_append \
               op_read_plus_sparse op_verify op_open_downgrade \
               op_symlink_nofollow op_rename_self op_at_variants \
               op_fdopendir op_read_write_large \
