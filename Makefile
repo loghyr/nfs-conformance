@@ -50,7 +50,7 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_stale_handle op_mmap_msync op_close_to_open \
         op_noac op_root_squash op_rsize_wsize op_soft_timeout \
         op_direct_io op_directory op_sync_dsync op_tmpfile \
-        op_readdir_mutation \
+        op_readdir_mutation op_rename_open_target \
         op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write \
         op_server_caps
 
