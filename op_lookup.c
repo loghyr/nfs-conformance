@@ -119,8 +119,11 @@ static void case_enoent(void)
 static void rmdir_r(const char *base, int depth)
 {
 	if (depth <= 0) return;
+	size_t blen = strlen(base);
+	if (blen + 3 > PATH_MAX) return;
 	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/d", base);
+	memcpy(path, base, blen);
+	memcpy(path + blen, "/d", 3);
 	rmdir_r(path, depth - 1);
 	rmdir(path);
 }

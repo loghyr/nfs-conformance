@@ -48,6 +48,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -249,12 +250,16 @@ static void case_change_attr(void)
 	return;
 #else
 	/*
-	 * Use raw syscall for statx to avoid glibc version dependency.
-	 * STATX_CHANGE_COOKIE was added in Linux 6.6.
+	 * Use raw syscall + raw buffer to avoid compile-time dependency
+	 * on a kernel that defines stx_change_attr (added in 6.6).
+	 * STATX_CHANGE_COOKIE = 0x40000000, and stx_change_attr sits
+	 * at byte offset 40 in struct statx as a __u64.
 	 */
 #ifndef STATX_CHANGE_COOKIE
 #define STATX_CHANGE_COOKIE 0x40000000U
 #endif
+#define STX_CHANGE_ATTR_OFF 40
+
 	char name[64];
 	snprintf(name, sizeof(name), "t_vf.ca.%ld", (long)getpid());
 	unlink(name);
@@ -265,10 +270,10 @@ static void case_change_attr(void)
 		return;
 	}
 
-	struct statx sx1;
-	memset(&sx1, 0, sizeof(sx1));
+	unsigned char sx1[256];
+	memset(sx1, 0, sizeof(sx1));
 	if (syscall(SYS_statx, AT_FDCWD, name, 0,
-		    STATX_CHANGE_COOKIE, &sx1) != 0) {
+		    STATX_CHANGE_COOKIE, sx1) != 0) {
 		if (errno == ENOSYS || errno == EINVAL) {
 			if (!Sflag)
 				printf("NOTE: %s: case5 skipped (statx/"
@@ -284,7 +289,10 @@ static void case_change_attr(void)
 		return;
 	}
 
-	if (!(sx1.stx_mask & STATX_CHANGE_COOKIE)) {
+	/* stx_mask is at offset 0 as a __u32. */
+	uint32_t mask1;
+	memcpy(&mask1, sx1, sizeof(mask1));
+	if (!(mask1 & STATX_CHANGE_COOKIE)) {
 		if (!Sflag)
 			printf("NOTE: %s: case5 skipped (kernel did not "
 			       "return STATX_CHANGE_COOKIE)\n", myname);
@@ -292,6 +300,9 @@ static void case_change_attr(void)
 		unlink(name);
 		return;
 	}
+
+	uint64_t ca1;
+	memcpy(&ca1, sx1 + STX_CHANGE_ATTR_OFF, sizeof(ca1));
 
 	char buf[64];
 	memset(buf, 'C', sizeof(buf));
@@ -303,20 +314,23 @@ static void case_change_attr(void)
 	}
 	close(fd);
 
-	struct statx sx2;
-	memset(&sx2, 0, sizeof(sx2));
+	unsigned char sx2[256];
+	memset(sx2, 0, sizeof(sx2));
 	if (syscall(SYS_statx, AT_FDCWD, name, 0,
-		    STATX_CHANGE_COOKIE, &sx2) != 0) {
+		    STATX_CHANGE_COOKIE, sx2) != 0) {
 		complain("case5: statx after: %s", strerror(errno));
 		unlink(name);
 		return;
 	}
 
-	if (sx2.stx_change_attr <= sx1.stx_change_attr)
+	uint64_t ca2;
+	memcpy(&ca2, sx2 + STX_CHANGE_ATTR_OFF, sizeof(ca2));
+
+	if (ca2 <= ca1)
 		complain("case5: change_attr did not increase after write "
 			 "(before=%llu, after=%llu)",
-			 (unsigned long long)sx1.stx_change_attr,
-			 (unsigned long long)sx2.stx_change_attr);
+			 (unsigned long long)ca1,
+			 (unsigned long long)ca2);
 
 	unlink(name);
 #endif
