@@ -69,6 +69,80 @@ Bread-and-butter NFSv4 ops that predate v4.1 but matter for every server.  Cthon
 | `op_unicode_names` | name encoding (RFC 7530 §1.4.2) | `open`/`stat`/`readdir`/`rename` with UTF-8 names | POSIX + UTF-8 locale |
 | `op_readdir_many` | READDIR cookie continuation (RFC 7530 §18.23) | `opendir`/`readdir` over ~1024 entries | POSIX |
 | `op_server_caps` | EXCHANGE_ID / SECINFO_NO_NAME | hand-rolled NFSv4.1 session | Linux + TCP/2049 to server (`-S SERVER` required) |
+| `op_lookup` | LOOKUP (RFC 7530 §18.14) | `stat`, `open`, deep paths | POSIX |
+| `op_lookupp` | LOOKUPP (RFC 7530 §18.15) | `stat("..")`, `openat(dirfd, "..")` | POSIX |
+| `op_lock` | LOCK / LOCKU / LOCKT (RFC 7530 §18.10-12) | `fcntl(F_SETLK / F_GETLK)` | POSIX |
+| `op_delegation_write` | OPEN_DELEGATE_WRITE (RFC 8881 §10.4) | `open(O_EXCL)`, write, recall via fork | POSIX |
+| `op_verify` | VERIFY / NVERIFY (RFC 7530 §18.28/§18.19) | `stat` consistency, `statx` change_attr | POSIX (case 5 Linux-only) |
+| `op_open_downgrade` | OPEN_DOWNGRADE (RFC 7530 §18.18) | multiple `open`/`close` fd patterns | POSIX |
+| `op_unlink` | REMOVE on regular files (RFC 7530 §18.25) | `unlink`, silly rename (open+unlink+read) | POSIX |
+| `op_chmod_chown` | SETATTR (RFC 7530 §18.30) | `chmod`, `chown`, setuid/setgid clearing | POSIX |
+| `op_utimensat` | SETATTR timestamps (RFC 7530 §18.30) | `utimensat`, UTIME_NOW, UTIME_OMIT, nsec | POSIX.1-2008 |
+| `op_rename_nlink` | RENAME nlink accounting (RFC 7530 §18.26) | cross-parent dir rename, replace | POSIX |
+| `op_append` | O_APPEND atomic semantics (IEEE 1003.1 §6.3.1) | `open(O_APPEND)`, concurrent append, pwrite | POSIX.1-1990 |
+
+### POSIX.1-2008/2024 conformance
+
+Tests for specific POSIX features introduced since the original cthon04
+suite, targeting NFS server areas that historically have conformance gaps.
+
+| Test | Feature | Userspace API | Portability |
+|---|---|---|---|
+| `op_symlink_nofollow` | AT_SYMLINK_NOFOLLOW + O_NOFOLLOW | `fstatat`, `utimensat`, `fchownat`, `linkat`, `open` | POSIX.1-2008 |
+| `op_rename_self` | rename same-inode no-op (POSIX.1-2024) | `rename` of hardlinks to same file | POSIX |
+| `op_at_variants` | *at() syscalls with real dirfds | `openat`, `mkdirat`, `mknodat`, `fchmodat`, `fchownat`, `renameat`, `unlinkat` | POSIX.1-2008 |
+| `op_fdopendir` | fdopendir(3) on NFS dirfds | `openat` + `fdopendir` + `readdir` | POSIX.1-2008 |
+| `op_read_write_large` | large I/O and offsets | `pread`/`pwrite` at >4 GiB, 1-4 MiB chunks, unaligned | POSIX |
+| `op_owner_override` | Linux owner-override vs POSIX strict | `chmod`/`unlink`/`rename` on 0444 files (git gc path) | POSIX + Linux (`-P`/`-L` modes) |
+
+### NFS-specific behavior tests
+
+Tests derived from the NFS FAQ and real-world failure reports.  These
+exercise NFS semantics that don't have an RFC section number but that
+applications depend on.
+
+| Test | What it tests | Portability | Special |
+|---|---|---|---|
+| `op_stale_handle` | ESTALE handling — the #1 NFS complaint | POSIX | |
+| `op_mmap_msync` | mmap + msync coherence — #1 NFS data-loss source for mmap apps | POSIX | |
+| `op_close_to_open` | Close-to-open cache consistency contract | POSIX | |
+| `op_noac` | Attribute-cache-disabled semantics | POSIX (detection Linux) | **Requires `-o noac` mount** |
+| `op_root_squash` | root_squash export behavior | POSIX | **Requires root** |
+
+### Mount-option-gated tests
+
+Some tests only make sense with specific mount options.  These tests
+auto-detect mount options via `/proc/self/mountinfo` (Linux only) and
+**skip** if the required option is not present:
+
+| Test | Required option | How to run | Override |
+|---|---|---|---|
+| `op_noac` | `-o noac` | `mount -o noac ...; ./op_noac -d /mnt` | `-f` forces run |
+
+On non-Linux platforms, mount option detection returns "unsupported" and
+the test runs unconditionally (with a NOTE).  Use `-f` to force the test
+on any platform regardless of detection.
+
+The `mount_has_option(opt)` and `mount_get_option_value(key)` helpers in
+`subr.c` are available for future mount-option-gated tests.  Pattern:
+
+```c
+if (!Fflag) {
+    int rc = mount_has_option("noac");
+    if (rc == 0)
+        skip("%s: mount does not have noac; mount with -o noac "
+             "to run this test (or -f to force)", myname);
+    if (rc == -1 && !Sflag)
+        printf("NOTE: %s: cannot detect mount options\n", myname);
+}
+```
+
+`op_root_squash` does not use mount-option gating (root_squash is a
+server export setting, not a client mount option).  It detects the
+squash mode at runtime by checking the uid of a newly created file
+and validates that subsequent operations are consistent with whatever
+mode is active.  Both root_squash and no_root_squash are valid — the
+test never fails on the choice of mode, only on inconsistent behavior.
 
 ## Non-goals (deferred)
 
