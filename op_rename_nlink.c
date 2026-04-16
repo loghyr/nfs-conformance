@@ -30,8 +30,8 @@
  * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
  */
 
-#define _POSIX_C_SOURCE 200809L
-#define _DEFAULT_SOURCE
+#define _GNU_SOURCE
+#define _DARWIN_C_SOURCE
 
 #include "tests.h"
 
@@ -42,6 +42,12 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+
+#ifdef __APPLE__
+#define ST_MTIM st_mtimespec
+#else
+#define ST_MTIM st_mtim
+#endif
 
 int Hflag = 0;
 int Sflag = 0;
@@ -258,13 +264,13 @@ static void case_parent_timestamps(void)
 	 * same wall-clock second when the kernel NFS client caches mtime
 	 * at second granularity; nanoseconds distinguish them.
 	 */
-	if (!(st_src_after.st_mtim.tv_sec > st_src_before.st_mtim.tv_sec ||
-	      (st_src_after.st_mtim.tv_sec == st_src_before.st_mtim.tv_sec &&
-	       st_src_after.st_mtim.tv_nsec > st_src_before.st_mtim.tv_nsec)))
+	if (!(st_src_after.ST_MTIM.tv_sec > st_src_before.ST_MTIM.tv_sec ||
+	      (st_src_after.ST_MTIM.tv_sec == st_src_before.ST_MTIM.tv_sec &&
+	       st_src_after.ST_MTIM.tv_nsec > st_src_before.ST_MTIM.tv_nsec)))
 		complain("case4: src parent mtime did not advance");
-	if (!(st_dst_after.st_mtim.tv_sec > st_dst_before.st_mtim.tv_sec ||
-	      (st_dst_after.st_mtim.tv_sec == st_dst_before.st_mtim.tv_sec &&
-	       st_dst_after.st_mtim.tv_nsec > st_dst_before.st_mtim.tv_nsec)))
+	if (!(st_dst_after.ST_MTIM.tv_sec > st_dst_before.ST_MTIM.tv_sec ||
+	      (st_dst_after.ST_MTIM.tv_sec == st_dst_before.ST_MTIM.tv_sec &&
+	       st_dst_after.ST_MTIM.tv_nsec > st_dst_before.ST_MTIM.tv_nsec)))
 		complain("case4: dst parent mtime did not advance");
 
 	unlink(df);
