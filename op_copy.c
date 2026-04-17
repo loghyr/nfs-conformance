@@ -30,6 +30,18 @@
  *      without extending the source read pointer past EOF.
  *      Derived from xfstests generic/430.
  *
+ *   5. Short-copy atomicity.  Pre-seed dst with pattern B (8 KiB),
+ *      populate src with 4 KiB of pattern A, then request an 8 KiB
+ *      copy.  The syscall must short-copy: return value in [1..4K],
+ *      dst[0..returned) == pattern A, dst[returned..8K) == pattern
+ *      B (untouched).  Critically, no zero-fill of the tail and no
+ *      torn bytes at the boundary.  xfstests generic/265 asserts a
+ *      similar atomicity contract when copy_file_range is forced
+ *      to fail mid-range via dm-error; NFS has no dm layer, so we
+ *      exercise the weaker short-read trigger (src-beyond-EOF)
+ *      which is still enough to catch a server that zeroes or
+ *      garbages dst past the truncated copy range.
+ *
  * Feature probe: we do a real 1-byte copy up front to detect
  * ENOSYS / EOPNOTSUPP before the main cases run.  A zero-length
  * probe is not sufficient because the kernel fast-paths that to 0
@@ -369,6 +381,89 @@ static void case_matrix_api(int sfd, int dfd)
 	}
 }
 
+static void case_short_copy_atomicity(int sfd, int dfd)
+{
+	const size_t pat_a_len = 4096;
+	const size_t dst_len   = 8192;
+
+	unsigned char *src_a = malloc(pat_a_len);
+	unsigned char *dst_b = malloc(dst_len);
+	if (!src_a || !dst_b) {
+		complain("case5: malloc");
+		free(src_a); free(dst_b);
+		return;
+	}
+	fill_pattern(src_a, pat_a_len, 0x5A5A);
+	fill_pattern(dst_b, dst_len,   0x5B5B);
+
+	if (ftruncate(sfd, 0) != 0 || ftruncate(dfd, 0) != 0) {
+		complain("case5: ftruncate reset: %s", strerror(errno));
+		free(src_a); free(dst_b);
+		return;
+	}
+	if (pwrite_all(sfd, src_a, pat_a_len, 0, "case5: seed src A") < 0
+	    || pwrite_all(dfd, dst_b, dst_len, 0, "case5: seed dst B") < 0) {
+		free(src_a); free(dst_b);
+		return;
+	}
+
+	/*
+	 * Request 8 KiB; src only has 4 KiB.  Server must short-copy.
+	 * Any return in [1..pat_a_len] is legal; 0 would be wrong here
+	 * because src is non-empty and soff starts at 0.
+	 */
+	off_t soff = 0, doff = 0;
+	ssize_t n = copy_file_range(sfd, &soff, dfd, &doff, dst_len, 0);
+	if (n < 0) {
+		complain("case5: copy_file_range: %s", strerror(errno));
+		free(src_a); free(dst_b);
+		return;
+	}
+	if (n <= 0 || (size_t)n > pat_a_len) {
+		complain("case5: returned %zd, expected 1..%zu",
+			 n, pat_a_len);
+		free(src_a); free(dst_b);
+		return;
+	}
+
+	/* Read back the whole 8 KiB of dst. */
+	unsigned char *rb = malloc(dst_len);
+	if (!rb) {
+		complain("case5: malloc rb");
+		free(src_a); free(dst_b);
+		return;
+	}
+	if (pread_all(dfd, rb, dst_len, 0, "case5: verify dst") != 0) {
+		free(src_a); free(dst_b); free(rb);
+		return;
+	}
+
+	/*
+	 * dst[0..n)   must match pattern A (the copied bytes).
+	 * dst[n..8K)  must match pattern B (the untouched tail).
+	 * The boundary at n is the atomicity test: a server that
+	 * zero-filled or garbage-filled the tail fails here.
+	 */
+	if (memcmp(rb, src_a, (size_t)n) != 0)
+		complain("case5: dst[0..%zd) != pattern A "
+			 "(copy_file_range wrote wrong source bytes)", n);
+
+	for (size_t i = (size_t)n; i < dst_len; i++) {
+		if (rb[i] != dst_b[i]) {
+			complain("case5: dst byte %zu = 0x%02x, expected "
+				 "0x%02x (pattern B) -- short-copy altered "
+				 "bytes past the returned count (tail zero-"
+				 "filled or garbage)",
+				 i, rb[i], dst_b[i]);
+			break;
+		}
+	}
+
+	free(rb);
+	free(src_a);
+	free(dst_b);
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -412,6 +507,8 @@ next:
 	RUN_CASE("case_offset", case_offset(sfd, dfd));
 	RUN_CASE("case_sparse_preservation", case_sparse_preservation(sfd, dfd));
 	RUN_CASE("case_matrix_api", case_matrix_api(sfd, dfd));
+	RUN_CASE("case_short_copy_atomicity",
+		 case_short_copy_atomicity(sfd, dfd));
 
 	close(sfd);
 	close(dfd);
