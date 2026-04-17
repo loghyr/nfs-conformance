@@ -211,14 +211,44 @@ Flags:
 aggregator), which reads each binary's TAP13 stream and summarises
 ok / not ok / skip counts.
 
-Typical use against an NFSv4.2 mount:
+### Recommended testing approach: local first, then NFS
+
+Always run the suite against a local filesystem FIRST, before
+pointing it at an NFS mount.  The tests are pure POSIX, so a local
+run establishes a clean baseline: every case that passes locally
+is a case whose assertions hold on the host kernel + filesystem.
+When the same test later fails against an NFS mount, the local
+pass proves that the test is correct and the failure is NFS-
+specific (client cache, server response, idmap, mount options,
+export policy, etc.), not a test bug or platform quirk.
 
 ```
+# Step 1: local baseline (ext4 / xfs / tmpfs / APFS — any local fs)
+make check CHECK_DIR=/tmp
+```
+
+Treat any FAIL here as a bug in the test or an OS-level quirk
+(APFS case-folding, macOS atime caching, tmpfs sticky-bit stub,
+etc.) and resolve it before moving on.  Track the set of tests
+that PASS locally; this is your gate.
+
+```
+# Step 2: NFS run
 sudo mount -t nfs -o vers=4.2 server:/export /mnt/nfs42
 make check CHECK_DIR=/mnt/nfs42
 ```
 
-Under the hood this is:
+Any test that PASSED locally but FAILs over NFS is a legitimate
+finding — document it, file against the server or client, reduce
+if needed.  Tests that SKIP (e.g., `op_tmpfile` on a server that
+does not support O_TMPFILE, `op_xattr` on a non-Linux platform,
+`op_noac` without the `noac` mount option) are environmental and
+not conformance problems.
+
+A FAIL that was also FAILing locally is not an NFS finding — fix
+the test first, or add the platform to the test's skip conditions.
+
+Under the hood `make check` is:
 
 ```
 NFS_CONFORMANCE_TAP=1 prove -e '' ./op_* :: -d /mnt/nfs42
