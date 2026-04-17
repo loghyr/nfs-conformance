@@ -136,7 +136,19 @@ clean:
 check: all
 	NFS_CONFORMANCE_TAP=1 prove -e '' `printf './%s ' $(TESTS)` :: -d $(CHECK_DIR)
 
-# Parallel variant.  Safe only across independent -d mounts.
+# Parallel variant.  Tests embed getpid() in every scratch-file name
+# (see R-CODE-5 in docs/REVIEWER-RULES.md) so concurrent test binaries
+# sharing a single -d mount do not collide on filenames.  The original
+# "Safe only across independent -d mounts" warning was overly strict.
+#
+# A single mount is safe when:
+#   - JOBS <= the server's session slot table size (usually >= 32);
+#   - no two tests share global server-side state (delegation holders,
+#     mount-option captures, stale-handle induction).
+#
+# If you need stronger isolation -- e.g., delegation tests racing each
+# other's lease state -- point each worker at its own subdirectory via
+# an external wrapper and set JOBS accordingly.
 check-j: all
 	NFS_CONFORMANCE_TAP=1 prove -j $(JOBS) -e '' `printf './%s ' $(TESTS)` :: -d $(CHECK_DIR)
 
