@@ -32,7 +32,12 @@ CC         ?= cc
 # Append our warnings/flags so users can still set CFLAGS externally;
 # BSD make's default CFLAGS ("-O2 -pipe") is preserved, GNU make's
 # default (empty) gets a sensible set.
-CFLAGS     += -g -Wall -Wextra -Wno-unused-parameter -std=gnu11
+#
+# _XOPEN_SOURCE=700 exposes the XSI surface (S_IFMT, S_IFLNK, setenv,
+# strdup, ...) on FreeBSD, which otherwise hides these when
+# _POSIX_C_SOURCE is defined.  On glibc and Darwin it is either
+# equivalent to _POSIX_C_SOURCE=200809L or a harmless superset.
+CFLAGS     += -g -Wall -Wextra -Wno-unused-parameter -std=gnu11 -D_XOPEN_SOURCE=700
 LDFLAGS    +=
 PREFIX     ?= /usr/local
 libexecdir ?= $(PREFIX)/libexec
