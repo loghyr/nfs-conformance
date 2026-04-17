@@ -35,6 +35,17 @@
  *      buffered, read back, verify.  Exercises the path where a
  *      single O_DIRECT write crosses multiple wsize chunks.
  *
+ *   6. Failed write must not expose stale content.  Seed the file
+ *      with pattern A (4 KiB, persisted), then issue an O_DIRECT
+ *      write with an intentionally-unaligned buffer that the kernel
+ *      is expected to reject (EINVAL).  Reopen and verify the file
+ *      still reads back as pattern A.  Inspired by xfstests
+ *      generic/250, which used dm-error to force a mid-transaction
+ *      failure; NFS has no dm layer, so we exercise the weaker but
+ *      still meaningful invariant that a rejected write must be
+ *      all-or-nothing, never a partial update that exposes a
+ *      mixture of old and new bytes.
+ *
  * Platform:
  *   Linux   : O_DIRECT from <fcntl.h> with _GNU_SOURCE.
  *   macOS   : no O_DIRECT; F_NOCACHE has different (advisory)
@@ -356,6 +367,99 @@ static void case_direct_large(void)
 	unlink(a);
 }
 
+static void case_failed_write_no_stale_data(void)
+{
+	char a[64];
+	snprintf(a, sizeof(a), "t_dio.st.%ld", (long)getpid());
+	unlink(a);
+
+	void *aligned = aligned_alloc_or_null(DIO_SIZE);
+	if (!aligned) {
+		complain("case6: posix_memalign: %s", strerror(errno));
+		return;
+	}
+	fill_pattern(aligned, DIO_SIZE, 0xA5A5);
+
+	/* Phase 1: seed pattern A via O_DIRECT, persist, close. */
+	int fd = open(a, O_RDWR | O_CREAT | O_DIRECT, 0644);
+	if (fd < 0) {
+		if (errno == EINVAL) {
+			if (!Sflag)
+				printf("NOTE: %s: case6 O_DIRECT refused, "
+				       "skipping\n", myname);
+		} else {
+			complain("case6: open O_DIRECT: %s", strerror(errno));
+		}
+		free(aligned);
+		unlink(a);
+		return;
+	}
+	if (pwrite_all(fd, aligned, DIO_SIZE, 0,
+		       "case6: seed pattern A") != 0) {
+		close(fd); free(aligned); unlink(a); return;
+	}
+	if (fsync(fd) != 0) {
+		complain("case6: fsync: %s", strerror(errno));
+		close(fd); free(aligned); unlink(a); return;
+	}
+	close(fd);
+
+	/*
+	 * Phase 2: attempt an O_DIRECT write that the kernel should
+	 * reject.  A 1000-byte write from an unaligned stack buffer
+	 * typically fails with EINVAL on Linux; some NFS setups accept
+	 * it.  Either way, the next reopen+read must still show
+	 * pattern A (never a partial overwrite).
+	 */
+	fd = open(a, O_RDWR | O_DIRECT);
+	if (fd < 0) {
+		complain("case6: reopen O_DIRECT: %s", strerror(errno));
+		free(aligned);
+		unlink(a);
+		return;
+	}
+	char bad[1000];
+	memset(bad, 0x5A, sizeof(bad));
+	errno = 0;
+	ssize_t n = pwrite(fd, bad, sizeof(bad), 0);
+	int saved = errno;
+	close(fd);
+
+	/* Phase 3: buffered reopen, verify pattern A is intact. */
+	int rfd = open(a, O_RDONLY);
+	if (rfd < 0) {
+		complain("case6: buffered reopen: %s", strerror(errno));
+		free(aligned);
+		unlink(a);
+		return;
+	}
+	unsigned char *rbuf = malloc(DIO_SIZE);
+	if (!rbuf) {
+		complain("case6: malloc");
+		close(rfd); free(aligned); unlink(a); return;
+	}
+	if (pread_all(rfd, rbuf, DIO_SIZE, 0,
+		      "case6: read after failed write") == 0) {
+		size_t miss = check_pattern(rbuf, DIO_SIZE, 0xA5A5);
+		if (miss) {
+			complain("case6: pattern A corrupted at byte %zu "
+				 "after rejected unaligned write "
+				 "(partial update exposed stale/new bytes; "
+				 "pwrite returned %zd errno=%s)",
+				 miss - 1, n, strerror(saved));
+		} else if (n >= 0 && !Sflag) {
+			printf("NOTE: %s: case6 unaligned O_DIRECT pwrite "
+			       "accepted (%zd bytes) but file content "
+			       "preserved — NFS was permissive and atomic\n",
+			       myname, n);
+		}
+	}
+	free(rbuf);
+	close(rfd);
+	free(aligned);
+	unlink(a);
+}
+
 #endif /* HAVE_O_DIRECT */
 
 int main(int argc, char **argv)
@@ -401,6 +505,8 @@ next:
 	RUN_CASE("case_direct_cross_visibility", case_direct_cross_visibility());
 	RUN_CASE("case_direct_unaligned", case_direct_unaligned());
 	RUN_CASE("case_direct_large", case_direct_large());
+	RUN_CASE("case_failed_write_no_stale_data",
+		 case_failed_write_no_stale_data());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
