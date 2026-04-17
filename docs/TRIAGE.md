@@ -547,7 +547,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: flock(2) locks are whole-file, owned by the open file description (shared by dup'd fds), and independent of fcntl F_SETLK locks on the same file. LOCK_EX excludes both LOCK_EX and LOCK_SH from other fds; LOCK_SH stacks across fds; dup'd fds share the lock state; close releases the lock even without explicit LOCK_UN.
 
-**Cases**: `case_exclusive_lock`, `case_shared_stack`, `case_exclusive_shared_conflict`, `case_dup_shares_lock_state`, `case_close_releases`.
+**Cases**: `case_exclusive_lock`, `case_shared_stack`, `case_exclusive_shared_conflict`, `case_dup_shares_lock_state`, `case_close_releases`, `case_flock_vs_fcntl`.
 
 **Failure patterns**
 
@@ -561,6 +561,8 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case3: LOCK_EX NB expected EWOULDBLOCK, got %s` | Non-blocking conflict returned wrong errno. | Conformance bug but not functional. |
 | `case4: LOCK_EX after dup's LOCK_UN failed with %s (dup did not release the shared open-file description's lock)` | LOCK_UN via dup'd fd didn't release the shared lock. The open-file-description vs fd-descriptor contract is the defining flock invariant -- if this fails, the kernel is treating flock like an OFD lock. | Real client bug. |
 | `case5: LOCK_EX after close returned %s (close did not release the flock)` | Close didn't trigger UNLOCK. Common NFS client bug: the client forgot to send UNLOCK when the last fd closed. | Real client bug; capture wire trace for missing UNLOCK. |
+| `case6: fcntl F_WRLCK after flock(LOCK_EX) returned unexpected errno %s` | fcntl returned something other than success, EAGAIN/EACCES, or ENOLCK/EOPNOTSUPP while flock held the file. Any other errno means the client-side flock-fcntl bridge is buggy. | Check client kernel version and mount options. The test intentionally accepts both "disjoint" (fcntl succeeds) and "unified" (fcntl blocks) lock spaces; neither is a bug. |
+| `NOTE: case6 fcntl F_WRLCK ... (disjoint/unified/not routed)` | Informational: which lock model this client uses. | Not a failure; records observed behaviour for future debugging. |
 
 **False positives**: ENOLCK / EOPNOTSUPP causes SKIP, not FAIL.
 
@@ -574,7 +576,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: O_APPEND writes are atomic seek-to-end + write. Concurrent appenders from two processes cannot lose each other's data.
 
-**Cases**: See `op_append.c` header (7 cases; case 5 is known to NOTE on Linux NFS due to pwrite+O_APPEND behavior).
+**Cases**: See `op_append.c` header (7 cases; case 5 is a POSIX pwrite+O_APPEND assertion the Linux NFS client is known to violate — it now FAILs there).
 
 **Failure patterns**
 
@@ -582,9 +584,10 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 |---|---|---|
 | `case 4 concurrent fork: lost N records` | O_APPEND atomicity broken in concurrent path. Server or client didn't serialize appends at EOF. | Real bug. Reproduce with more workers. |
 | `case 6 O_TRUNC didn't reset size` | Open with O_TRUNC followed by O_APPEND write didn't start at 0. | Client or server open-path bug. |
-| `NOTE: case 5 pwrite+O_APPEND ...` | Informational — Linux NFS client applies O_APPEND to pwrite in violation of POSIX. | Not a failure; known Linux behavior. |
+| `case5: pwrite+O_APPEND size ... (pwrite must ignore O_APPEND per POSIX.1-1990 S6.4.2; Linux NFS client violates this)` | Known Linux NFS client bug: pwrite(fd, ...) on an O_APPEND fd appends instead of writing at the given offset. POSIX.1-1990 S6.4.2 forbids this. | Real conformance bug; the server is correct. Workaround is to open a fresh non-O_APPEND fd for pwrite use. |
+| `case5: pwrite data not at offset 0` | Content-side symptom of the same bug. | Same as above. |
 
-**False positives**: Case 5 on Linux is a known NOTE, not FAIL.
+**False positives**: None. (Case 5 was previously a NOTE but is now a FAIL per charter: POSIX conformance first.)
 
 **Environmental gates**: None.
 
@@ -649,11 +652,10 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 | Signature | Likely cause | Diagnose |
 |---|---|---|
-| `case3: src nlink changed from %lu to %lu (regular file rename must not change parent nlink)` | File rename changing parent nlink — indicates the server counts files in directory nlink (APFS quirk; not POSIX-conformant but not universally rejected). | On macOS: known quirk; expected FAIL. On NFS against ext4/xfs: real bug. |
 | `case4: src parent mtime did not advance` | POSIX requires rename() to advance the src + dst parent mtime. Server didn't. | Real conformance bug. |
-| `NOTE: case1/2 ... nlink %lu -> %lu (traditional Unix expects ...)` | Server reports constant st_nlink for directories — not traditional but POSIX-legal. | Not a failure. |
+| `NOTE: case1/2/3 ... nlink %lu -> %lu (traditional Unix expects ...)` | Server / local FS counts all dirents in directory st_nlink (APFS; some modern filesystems).  POSIX.1-2008 does not require the traditional "nlink = 2 + subdirs" model. | Not a failure.  If running against a server expected to preserve the traditional model (knfsd-backed) and this NOTE appears, check the backing filesystem. |
 
-**False positives**: Case 3 on macOS/APFS is a known local-FS quirk.
+**False positives**: Directory st_nlink changes under regular-file rename/unlink are NOTE-only — POSIX does not mandate the traditional model.
 
 **Environmental gates**: None.
 
@@ -682,7 +684,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: Concurrent mutation and readdir produce sane results: the remaining entries are surfaced, telldir/seekdir cookies work, rewinddir sees the current state.
 
-**Cases**: `case_read_delete_continue`, `case_rewinddir_after_mutation`, `case_telldir_seekdir_survival`, `case_empty_after_delete`, `case_two_streams`.
+**Cases**: `case_read_delete_continue`, `case_rewinddir_after_mutation`, `case_telldir_seekdir_survival`, `case_empty_after_delete`, `case_two_streams`, `case_read_add_continue`, `case_read_replace_continue`.
 
 **Failure patterns**
 
@@ -693,6 +695,11 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `rewinddir missed N of M newly-added entries` | Same class. | Same. |
 | `NOTE: seekdir revisited N already-consumed entries after mid-stream delete` | Informational only — NFS cookie-stability semantic varies by server; pro-LIT spec-permitted. | None. |
 | `two DIR* streams show interference` | Opening the same directory twice should yield independent iterators. If one affects the other, client bug. | Client-side: check DIR* state management. |
+| `case6: N of M original entries missing after iteration spanning an add` | Adding entries during iteration invalidated cookies for previously-existing entries. The server is dropping the original-entry cookies on insert. | Server cookie-stability bug; entries present at open time must remain reachable. |
+| `case6: original entry f%03d reported twice across the mutation boundary` | Server re-emitted an already-consumed entry after insert (cookie reset). | Same class; wire trace the READDIR sequence. |
+| `case7: readdir loop exceeded 1024 iterations after same-name replace` | Server cookie regenerated in a way that points back to the same position -- infinite loop probe. | Real server bug; capture a bounded wire trace. |
+| `case7: f%03d reported %d times after same-name replace` | Same entry reported more than once across the recreate boundary. | Server cookie-stability bug on unlink+recreate same name. |
+| `case7: f%03d d_ino=... matches neither old inode ... nor new inode ... (mixed server state)` | Server emitted a dirent where d_ino came from one version of the entry and d_name came from another. Classic cookie/attribute desync. | Real server bug. |
 
 **Environmental gates**: None.
 
@@ -904,7 +911,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: `copy_file_range(2)` maps to NFSv4.2 intra-server COPY. Data is transferred server-side (no round-trip through client memory) when source and destination are on the same server.
 
-**Cases**: `case_simple`, `case_offset`, `case_sparse_preservation`, `case_matrix_api` (generic/430), `case_short_copy_atomicity` (generic/265).
+**Cases**: `case_simple`, `case_offset`, `case_sparse_preservation`, `case_matrix_api` (generic/430), `case_short_copy_atomicity` (generic/265), `case_intra_file` (same-fd copy).
 
 **Failure patterns**
 
@@ -921,6 +928,8 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case5: returned %zd, expected 1..%zu` | Short-copy returned 0 (illegal when src is non-empty and soff starts at 0) or more bytes than src holds. | Capture wire trace of COPY; compare server's reported byte-count against actual src size. |
 | `case5: dst[0..%zd) != pattern A` | Short-copy wrote wrong source bytes — src offset or data-path confusion. | Compare src_off / dst_off reported in the COPY RPC against expected. |
 | `case5: dst byte %zu = 0x%02x, expected 0x%02x (pattern B)` | Short-copy altered dst bytes past the returned count — tail zero-filled or garbage. This is the generic/265 class bug. | Real integrity bug: dst tail must be untouched on short copies. |
+| `case6a: non-overlapping intra-file copy: %s` | Same-fd copy_file_range fails where it should succeed. | Client-side src==dst path bug; check whether the NFS COPY RPC is actually emitted. |
+| `case6a: [64K..68K) != pattern A after intra-file copy` | Same-fd copy returned success but wrote the wrong bytes. | Real integrity bug. |
 
 **False positives**: `copy_file_range` may fall back to a read/write loop on the client — all-zero hole preservation still required but may behave differently. Not a failure.
 
@@ -1040,6 +1049,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 |---|---|---|
 | Open fd gets ESTALE after unlink | Silly-rename not implemented — server reaped the inode while client held an open. | Check `/proc/self/mountstats` for silly-rename counters; check client NFS version. |
 | `unlink of nonexistent succeeded` | Client cached a "deleted" entry and returned success instead of ENOENT. | Client directory cache coherence bug. |
+| `NOTE: case4 parent nlink %lu -> %lu after regular-file unlink` | Backing filesystem counts every dirent in directory st_nlink (APFS; some modern backends). POSIX.1-2008 does not require the traditional "nlink = 2 + subdirs" model. | Not a failure. Same pattern as op_rename_nlink case 3. |
 | `stat after unlink succeeded` | Same class — client returning stale positive lookup. | Check client dentry cache. |
 
 **False positives**: None on a clean mount.
@@ -1624,7 +1634,9 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Tier**: SPEC (NFSv4.2 XATTR extension, RFC 8276)
 
-**Asserts**: `setxattr`/`getxattr`/`listxattr`/`removexattr` on the `user.*` namespace round-trip. Tests GETXATTR, SETXATTR, LISTXATTRS, REMOVEXATTR NFSv4.2 ops.
+**Asserts**: `setxattr`/`getxattr`/`listxattr`/`removexattr` on the `user.*` namespace round-trip, report correct sizes via the NULL-buffer query shape, return ERANGE on too-small buffers without truncating, and return ENODATA when removing a missing name. Tests GETXATTR, SETXATTR, LISTXATTRS, REMOVEXATTR NFSv4.2 ops.
+
+**Cases**: `case_roundtrip`, `case_create_flag`, `case_replace_flag`, `case_multiple`, `case_large_value`, `case_size_queries`, `case_erange_too_small`, `case_removexattr_missing`.
 
 **Failure patterns**
 
@@ -1634,6 +1646,11 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `getxattr returned wrong value` | Data not round-tripping. | Real bug; NFSv4.2 xattr path. |
 | `xattr not in listxattr` | setxattr succeeded but listxattr doesn't show it. | Server xattr index inconsistency. |
 | `removexattr: %s` | Can't remove a xattr just set. | Server xattr tracking bug. |
+| `case6: getxattr size query returned %zd (expected %zu)` | Server's NULL-buffer size query returned wrong length. | Server attribute-length accounting bug. |
+| `case6: listxattr into exact-size buffer returned %s (size query undercounted)` | Size query returned a value that didn't fit the list. | Same class; LISTXATTRS length accounting. |
+| `case7: getxattr into 4-byte buffer returned %zd (expected ERANGE)` | Too-small buffer was accepted (possibly with silent truncation). | RFC 8276 GETXATTR: must ERANGE, not truncate. |
+| `case7: getxattr truncated into caller buffer on ERANGE` | Error path wrote into caller buffer. | Real integrity bug: ERANGE path must not modify caller state. |
+| `case8: removexattr on missing name returned %s (expected ENODATA)` | Server returned wrong errno on missing-attr remove. | REMOVEXATTR errno mapping bug. |
 
 **Environmental gates**: Linux `user.*` xattrs + NFSv4.2 server. Non-Linux platforms have different xattr APIs; test SKIPs.
 
@@ -1685,6 +1702,16 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `shared locks must stack` | op_flock | Two LOCK_SH couldn't coexist on flock |
 | `dup did not release the shared open-file description's lock` | op_flock | LOCK_UN via dup'd fd didn't clear the flock (OFD-style behavior mis-applied) |
 | `close did not release the flock` | op_flock | Close didn't trigger UNLOCK on an flock-held fd |
+| `pwrite must ignore O_APPEND per POSIX.1-1990 S6.4.2` | op_append | Linux NFS client incorrectly applies O_APPEND to pwrite (POSIX violation) |
+| `parent nlink ... after regular-file` | op_unlink / op_rename_nlink | NOTE: backing FS counts every dirent in directory st_nlink (APFS-style) |
+| `getxattr size query returned` | op_xattr | NULL-buffer size query returned wrong length |
+| `listxattr into exact-size buffer` | op_xattr | Size query undercounted the list length |
+| `getxattr truncated into caller buffer on ERANGE` | op_xattr | Error path modified caller buffer (must leave untouched) |
+| `removexattr on missing name` | op_xattr | Wrong errno on missing-attribute remove |
+| `intra-file copy` | op_copy | Same-fd copy_file_range correctness |
+| `fcntl F_WRLCK after flock(LOCK_EX) returned unexpected errno` | op_flock | Cross-model lock interaction returned wrong errno class |
+| `after iteration spanning an add` | op_readdir_mutation | Add-during-iteration broke original-entry cookies |
+| `after same-name replace` | op_readdir_mutation | Unlink+recreate of a dirent confused server cookies or attrs |
 | `iovec ... ordering broken` | op_writev | Client writev fragmentation reordered iovec elements |
 | `overwrite lost` | op_overwrite | Client write-coalescing or server ordering dropped the overwrite |
 | `zero overwrite was dropped; original ... survived` | op_overwrite | Server dedup path mis-handling zero over allocated block |
