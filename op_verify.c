@@ -54,8 +54,19 @@
 
 #define _POSIX_C_SOURCE 200809L
 #define _GNU_SOURCE
+#if defined(__APPLE__)
+# define _DARWIN_C_SOURCE /* exposes struct stat st_mtimespec */
+#endif
 
 #include "tests.h"
+
+/* struct stat timespec field names differ between Linux (st_mtim)
+ * and Darwin/BSD (st_mtimespec). */
+#ifdef __APPLE__
+# define ST_MTIM(s) ((s).st_mtimespec)
+#else
+# define ST_MTIM(s) ((s).st_mtim)
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
@@ -240,8 +251,22 @@ static void case_mtime_after_write(void)
 		return;
 	}
 
-	if (st_after.st_mtime < st_before.st_mtime)
-		complain("case4: mtime went backwards after write");
+	/*
+	 * POSIX requires mtime advance on write.  Use nsec precision
+	 * so a write that lands in the same wall-clock second as the
+	 * pre-write stat still registers as advancement.  The old
+	 * second-precision < comparison only caught regressions, not
+	 * non-advancement.
+	 */
+	if (ST_MTIM(st_after).tv_sec < ST_MTIM(st_before).tv_sec
+	    || (ST_MTIM(st_after).tv_sec == ST_MTIM(st_before).tv_sec
+		&& ST_MTIM(st_after).tv_nsec <= ST_MTIM(st_before).tv_nsec))
+		complain("case4: mtime did not advance after write "
+			 "(%lld.%09ld -> %lld.%09ld)",
+			 (long long)ST_MTIM(st_before).tv_sec,
+			 ST_MTIM(st_before).tv_nsec,
+			 (long long)ST_MTIM(st_after).tv_sec,
+			 ST_MTIM(st_after).tv_nsec);
 
 	close(fd);
 	unlink(name);

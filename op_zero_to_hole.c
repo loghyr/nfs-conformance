@@ -164,10 +164,9 @@ static int verify_all_zero(int fd, off_t size, const char *label)
 		complain("%s: malloc %lld", label, (long long)size);
 		return -1;
 	}
-	ssize_t r = pread(fd, buf, (size_t)size, 0);
-	if (r != size) {
-		complain("%s: pread %zd / %lld: %s",
-			 label, r, (long long)size, strerror(errno));
+	/* Use pread_all so EINTR / short-read paths retry rather than
+	 * producing a false FAIL. */
+	if (pread_all(fd, buf, (size_t)size, 0, label) != 0) {
 		free(buf);
 		return -1;
 	}
