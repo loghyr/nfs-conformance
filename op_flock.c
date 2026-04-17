@@ -46,6 +46,19 @@
  *      Tests the cleanup path that NFS servers sometimes lose
  *      when the client forgets to send UNLOCK on close.
  *
+ *   6. flock vs fcntl interaction.  POSIX does not mandate that
+ *      flock(2) and fcntl(F_SETLK) share a lock space, but many
+ *      systems (and NFS client implementations) blur the line.
+ *      Exercise the common-confusion path: acquire flock(LOCK_EX)
+ *      on fd_a, then try fcntl(F_SETLK, F_WRLCK, whole file) on
+ *      fd_b.  Record whichever outcome -- the two lock models are
+ *      separate (fcntl succeeds), unified (fcntl blocks/EAGAINs),
+ *      or one is unimplemented over NFS (ENOLCK/EOPNOTSUPP).  The
+ *      test only asserts that the operation TERMINATES -- a hang
+ *      or a spurious error outside the expected set is the real
+ *      bug.  Gemini-flagged gap: "common source of client-side
+ *      emulation bugs over NFS".
+ *
  * Platform:
  *   Linux / FreeBSD / macOS: flock(2) available natively.
  *   Solaris: flock is a BSD-compat convenience; semantics match.
@@ -293,6 +306,78 @@ static void case_close_releases(void)
 	close(other);
 }
 
+static void case_flock_vs_fcntl(void)
+{
+	int fa = open_rw(fl_name, "case6a");
+	int fb = open_rw(fl_name, "case6b");
+	if (fa < 0 || fb < 0) {
+		if (fa >= 0) close(fa);
+		if (fb >= 0) close(fb);
+		return;
+	}
+
+	if (flock(fa, LOCK_EX) != 0) {
+		if (errno == ENOLCK || errno == EOPNOTSUPP) {
+			close(fa); close(fb);
+			skip("%s: flock returned %s; lock manager or flock "
+			     "routing unavailable", myname, strerror(errno));
+		}
+		complain("case6: LOCK_EX via flock: %s", strerror(errno));
+		close(fa); close(fb);
+		return;
+	}
+
+	/*
+	 * Try fcntl(F_SETLK, F_WRLCK, whole file) on a SECOND fd.
+	 * Legal outcomes on this invocation:
+	 *   - succeed (0): flock and fcntl use disjoint lock spaces
+	 *     (BSD + some Linux configs).
+	 *   - fail EAGAIN / EACCES: unified lock space; fcntl saw the
+	 *     flock as a conflict.
+	 *   - fail ENOLCK / EOPNOTSUPP: lock manager for one or the
+	 *     other isn't running over this mount.
+	 * Anything else is a bug (usually "hang" or "wrong errno" from
+	 * a broken client-side emulation).
+	 */
+	struct flock fl;
+	memset(&fl, 0, sizeof(fl));
+	fl.l_type   = F_WRLCK;
+	fl.l_whence = SEEK_SET;
+	fl.l_start  = 0;
+	fl.l_len    = 0; /* whole file */
+
+	errno = 0;
+	int rc = fcntl(fb, F_SETLK, &fl);
+	int saved = errno;
+	if (rc == 0) {
+		if (!Sflag)
+			printf("NOTE: %s: case6 fcntl F_WRLCK succeeded while "
+			       "fd_a holds flock(LOCK_EX) -- disjoint lock "
+			       "spaces (BSD model)\n", myname);
+		/* Release. */
+		fl.l_type = F_UNLCK;
+		fcntl(fb, F_SETLK, &fl);
+	} else if (saved == EAGAIN || saved == EACCES) {
+		if (!Sflag)
+			printf("NOTE: %s: case6 fcntl F_WRLCK blocked by the "
+			       "flock -- unified lock space (Linux-style)\n",
+			       myname);
+	} else if (saved == ENOLCK || saved == EOPNOTSUPP) {
+		if (!Sflag)
+			printf("NOTE: %s: case6 fcntl F_WRLCK returned %s -- "
+			       "fcntl locks not routed over this mount\n",
+			       myname, strerror(saved));
+	} else {
+		complain("case6: fcntl F_WRLCK after flock(LOCK_EX) returned "
+			 "unexpected errno %s (expected success, EAGAIN/EACCES, "
+			 "or ENOLCK/EOPNOTSUPP)", strerror(saved));
+	}
+
+	flock(fa, LOCK_UN);
+	close(fa);
+	close(fb);
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -339,6 +424,8 @@ next:
 		 case_dup_shares_lock_state());
 	RUN_CASE("case_close_releases",
 		 case_close_releases());
+	RUN_CASE("case_flock_vs_fcntl",
+		 case_flock_vs_fcntl());
 
 	unlink(fl_name);
 
