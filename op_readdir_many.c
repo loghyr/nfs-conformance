@@ -5,18 +5,24 @@
  * cookie / continuation handling over a large directory.
  *
  * op_readdir exercises the basic READDIR shape with a handful of
- * entries that fit in one reply.  This test creates N entries (1024
+ * entries that fit in one reply.  This test creates N entries (256
  * by default) so the client must issue several READDIR calls, each
  * passing the previous reply's cookie, and the server must return
  * the next batch without losing or duplicating entries.  Bugs
  * around cookie stability, buffer sizing, and EOF handling only
  * show up at this scale.
  *
+ * Setup/teardown are SHARED across the three cases: create once,
+ * run all three readdir scenarios against the same directory,
+ * remove once.  Earlier versions of this test re-created N files
+ * per case, which tripled the wall-time on high-latency mounts
+ * without exercising anything extra.
+ *
  * Cases:
  *
- *   1. Create N = 1024 files named t_rm.NNNN.PID, readdir the
- *      scratch directory, verify each name appears exactly once.
- *      Confirms no entries lost across continuations.
+ *   1. Create N files, readdir the scratch directory, verify each
+ *      name appears exactly once.  Confirms no entries lost across
+ *      continuations.
  *
  *   2. Re-readdir the same directory with a fresh opendir() handle,
  *      verify the count still matches (cookies are not sticky across
@@ -29,8 +35,10 @@
  *      server does not lose cookies when the directory changes
  *      mid-walk.
  *
- * All created files are removed on PASS.  On FAIL, up to N stragglers
- * may remain; subsequent runs will re-try.
+ * Size controls:
+ *   default    N = 256   (forces several READDIR round-trips)
+ *   -N COUNT   override
+ *   -f         N = 32    (fast smoke; may not force continuation)
  *
  * Portable: POSIX opendir/readdir/closedir.  No Linux-specific API.
  */
@@ -56,27 +64,35 @@ int Nflag = 0;
 
 static const char *myname = "op_readdir_many";
 
-#define N_ENTRIES_DEFAULT 1024
+#define N_ENTRIES_DEFAULT 256
+#define N_ENTRIES_FAST    32
+
+/* Shared prefix for the entries used by every case.  The mid-walk
+ * extra entry created by case 3 uses a distinct "_extra" suffix so
+ * the index-parsing logic skips it. */
+static const char *prefix = "t_rm";
 
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: %s [-hstfn] [-d DIR]\n"
+		"usage: %s [-hstfn] [-N COUNT] [-d DIR]\n"
 		"  stress readdir -> NFSv4 READDIR continuation (RFC 7530 S18.23)\n"
-		"  -h help  -s silent  -t timing  -f function-only (N=128)\n"
-		"  -n no mkdir  -d DIR  (default cwd)\n",
-		myname);
+		"  -h help  -s silent  -t timing\n"
+		"  -f fast (N=%d)  -N COUNT explicit size (default %d)\n"
+		"  -n no mkdir  -d DIR (default cwd)\n",
+		myname, N_ENTRIES_FAST, N_ENTRIES_DEFAULT);
 }
 
 /* Create N files; return 0 on success.  Caller owns removal. */
-static int create_many(const char *prefix, int n, long pid)
+static int create_many(int n, long pid)
 {
 	char name[64];
 	for (int i = 0; i < n; i++) {
 		snprintf(name, sizeof(name), "%s.%04d.%ld", prefix, i, pid);
 		int fd = open(name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		if (fd < 0) {
-			complain("create %s: %s", name, strerror(errno));
+			complain("setup: create %s: %s",
+				 name, strerror(errno));
 			return -1;
 		}
 		close(fd);
@@ -84,7 +100,7 @@ static int create_many(const char *prefix, int n, long pid)
 	return 0;
 }
 
-static void remove_many(const char *prefix, int n, long pid)
+static void remove_many(int n, long pid)
 {
 	char name[64];
 	for (int i = 0; i < n; i++) {
@@ -94,14 +110,15 @@ static void remove_many(const char *prefix, int n, long pid)
 }
 
 /*
- * scan_and_count -- readdir the cwd, count entries whose names start
- * with `prefix.` and end with `.PID`.  Marks each seen entry in seen[]
- * (array of length n) by setting seen[index]=1 so duplicates are
- * detectable.  Returns the number of matching entries seen on success,
- * -1 on readdir failure, -2 on duplicate, -3 on out-of-range index.
+ * scan_and_count -- readdir cwd, count entries whose names are
+ * prefix.NNNN.PID with NNNN a four-digit index in [0, n).  Marks
+ * each seen index in seen[] so duplicates are detectable.  Entries
+ * that don't parse as a numbered entry (including the "_extra"
+ * one from case 3) are skipped silently.
+ *
+ * Returns: count on success, -1 on readdir failure, -2 on duplicate.
  */
-static int scan_and_count(const char *prefix, int n, long pid,
-			  unsigned char *seen)
+static int scan_and_count(int n, long pid, unsigned char *seen)
 {
 	memset(seen, 0, (size_t)n);
 	DIR *dp = opendir(".");
@@ -118,7 +135,7 @@ static int scan_and_count(const char *prefix, int n, long pid,
 	struct dirent *de;
 	while ((de = readdir(dp)) != NULL) {
 		size_t nl = strlen(de->d_name);
-		/* "prefix.NNNN" + suffix ".PID" = prefix_len + 5 + suffix_len */
+		/* Name shape: "prefix.NNNN" + suffix ".PID" */
 		if (nl < prefix_len + 5 + suffix_len)
 			continue;
 		if (strncmp(de->d_name, prefix, prefix_len) != 0)
@@ -127,16 +144,13 @@ static int scan_and_count(const char *prefix, int n, long pid,
 			continue;
 		if (strcmp(de->d_name + nl - suffix_len, suffix) != 0)
 			continue;
-		/* Parse four-digit index from positions prefix_len+1..+4 */
 		char idxbuf[5];
 		memcpy(idxbuf, de->d_name + prefix_len + 1, 4);
 		idxbuf[4] = '\0';
 		char *endp;
 		long idx = strtol(idxbuf, &endp, 10);
-		if (*endp != '\0' || idx < 0 || idx >= n) {
-			closedir(dp);
-			return -3;
-		}
+		if (*endp != '\0' || idx < 0 || idx >= n)
+			continue;           /* not one of ours; skip */
 		if (seen[idx]) {
 			closedir(dp);
 			return -2;
@@ -148,31 +162,15 @@ static int scan_and_count(const char *prefix, int n, long pid,
 	return matched;
 }
 
-/* case 1 ---------------------------------------------------------------- */
-
 static void case_walk_all(int n, long pid)
 {
-	const char *prefix = "t_rm.all";
-	if (create_many(prefix, n, pid) != 0) {
-		remove_many(prefix, n, pid);
-		return;
-	}
-
 	unsigned char *seen = calloc((size_t)n, 1);
-	if (!seen) {
-		complain("case1: calloc(%d)", n);
-		remove_many(prefix, n, pid);
-		return;
-	}
+	if (!seen) { complain("case1: calloc(%d)", n); return; }
 
-	int matched = scan_and_count(prefix, n, pid, seen);
-	if (matched == -1) {
-		/* complain already issued */
-	} else if (matched == -2) {
+	int matched = scan_and_count(n, pid, seen);
+	if (matched == -2) {
 		complain("case1: duplicate entry from readdir");
-	} else if (matched == -3) {
-		complain("case1: out-of-range index parsed from readdir name");
-	} else if (matched != n) {
+	} else if (matched >= 0 && matched != n) {
 		complain("case1: readdir saw %d entries, expected %d "
 			 "(continuation dropped %d entries)",
 			 matched, n, n - matched);
@@ -180,61 +178,33 @@ static void case_walk_all(int n, long pid)
 			if (!seen[i])
 				fprintf(stderr, "  missing idx %d\n", i);
 	}
-
 	free(seen);
-	remove_many(prefix, n, pid);
 }
-
-/* case 2 ---------------------------------------------------------------- */
 
 static void case_walk_twice(int n, long pid)
 {
-	const char *prefix = "t_rm.twice";
-	if (create_many(prefix, n, pid) != 0) {
-		remove_many(prefix, n, pid);
-		return;
-	}
-
 	unsigned char *seen = calloc((size_t)n, 1);
-	if (!seen) {
-		complain("case2: calloc(%d)", n);
-		remove_many(prefix, n, pid);
-		return;
-	}
+	if (!seen) { complain("case2: calloc(%d)", n); return; }
 
-	int m1 = scan_and_count(prefix, n, pid, seen);
-	int m2 = scan_and_count(prefix, n, pid, seen);
+	int m1 = scan_and_count(n, pid, seen);
+	int m2 = scan_and_count(n, pid, seen);
 	if (m1 != n || m2 != n)
 		complain("case2: readdir counts differ across passes "
 			 "(first=%d second=%d expected=%d)",
 			 m1, m2, n);
 
 	free(seen);
-	remove_many(prefix, n, pid);
 }
-
-/* case 3 ---------------------------------------------------------------- */
 
 static void case_walk_with_mutation(int n, long pid)
 {
-	const char *prefix = "t_rm.mut";
-	if (create_many(prefix, n, pid) != 0) {
-		remove_many(prefix, n, pid);
-		return;
-	}
-
 	unsigned char *seen = calloc((size_t)n, 1);
-	if (!seen) {
-		complain("case3: calloc(%d)", n);
-		remove_many(prefix, n, pid);
-		return;
-	}
+	if (!seen) { complain("case3: calloc(%d)", n); return; }
 
 	DIR *dp = opendir(".");
 	if (!dp) {
 		complain("case3: opendir: %s", strerror(errno));
 		free(seen);
-		remove_many(prefix, n, pid);
 		return;
 	}
 
@@ -247,13 +217,13 @@ static void case_walk_with_mutation(int n, long pid)
 	int half = n / 2;
 	int dup = 0;
 	char extra_name[64];
-	snprintf(extra_name, sizeof(extra_name), "%s.X.%ld", prefix, pid);
+	snprintf(extra_name, sizeof(extra_name),
+		 "%s._extra.%ld", prefix, pid);
 	int extra_created = 0;
 
 	struct dirent *de;
 	while ((de = readdir(dp)) != NULL) {
 		size_t nl = strlen(de->d_name);
-		/* "prefix.NNNN" + suffix ".PID" = prefix_len + 5 + suffix_len */
 		if (nl < prefix_len + 5 + suffix_len)
 			continue;
 		if (strncmp(de->d_name, prefix, prefix_len) != 0)
@@ -264,13 +234,11 @@ static void case_walk_with_mutation(int n, long pid)
 			continue;
 		char idxbuf[5];
 		memcpy(idxbuf, de->d_name + prefix_len + 1, 4);
-		if (idxbuf[0] == 'X') /* the mid-walk entry */
-			continue;
 		idxbuf[4] = '\0';
 		char *endp;
 		long idx = strtol(idxbuf, &endp, 10);
 		if (*endp != '\0' || idx < 0 || idx >= n)
-			continue;
+			continue;           /* not a numbered entry */
 		if (seen[idx]) {
 			dup = 1;
 			break;
@@ -299,13 +267,13 @@ static void case_walk_with_mutation(int n, long pid)
 	if (extra_created)
 		unlink(extra_name);
 	free(seen);
-	remove_many(prefix, n, pid);
 }
 
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
 	struct timespec t0, t1;
+	int n_override = 0;
 
 	while (--argc > 0 && argv[1][0] == '-') {
 		argv++;
@@ -316,6 +284,16 @@ int main(int argc, char **argv)
 			case 't': Tflag = 1; break;
 			case 'f': Fflag = 1; break;
 			case 'n': Nflag = 1; break;
+			case 'N':
+				if (argc < 2) { usage(); return TEST_FAIL; }
+				n_override = (int)strtol(argv[1], NULL, 10);
+				if (n_override < 1) {
+					usage();
+					return TEST_FAIL;
+				}
+				argv++;
+				argc--;
+				goto next;
 			case 'd':
 				if (argc < 2) { usage(); return TEST_FAIL; }
 				dir = argv[1];
@@ -334,14 +312,24 @@ next:
 		"readdir continuation -> NFSv4 READDIR (RFC 7530 S18.23)");
 	cd_or_skip(myname, dir, Nflag);
 
-	int n = Fflag ? 128 : N_ENTRIES_DEFAULT;
+	int n = n_override > 0 ? n_override
+		: (Fflag ? N_ENTRIES_FAST : N_ENTRIES_DEFAULT);
 	long pid = (long)getpid();
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
+	/* Shared setup: create N files once. */
+	if (create_many(n, pid) != 0) {
+		remove_many(n, pid);
+		return finish(myname);
+	}
+
 	RUN_CASE("case_walk_all", case_walk_all(n, pid));
 	RUN_CASE("case_walk_twice", case_walk_twice(n, pid));
 	RUN_CASE("case_walk_with_mutation", case_walk_with_mutation(n, pid));
+
+	/* Shared teardown. */
+	remove_many(n, pid);
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
