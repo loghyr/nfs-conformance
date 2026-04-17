@@ -122,24 +122,20 @@ struct nfc_deleg {
 	uint16_t d_pad;   /* must be 0 */
 };
 
-/* Pre-built unlock struct for use in the signal handler. */
-static const struct nfc_deleg g_deleg_unlck = { 0, F_UNLCK, 0 };
-
 /* Global flag set by the SIGIO handler in cases 5 and 6. */
-static volatile sig_atomic_t g_sigio_fd = -1;
 static volatile sig_atomic_t g_sigio_received = 0;
 
+/*
+ * SIGIO handler.  Sets ONLY an async-signal-safe flag.  POSIX does
+ * not list fcntl(2) among the async-signal-safe functions (see
+ * signal-safety(7)); calling it from a handler is undefined behaviour
+ * that can deadlock libc or corrupt state under the wrong interrupt
+ * timing.  The main path polls this flag and issues F_SETDELEG from
+ * normal control flow.
+ */
 static void sigio_handler(int sig __attribute__((unused)))
 {
 	g_sigio_received = 1;
-	/*
-	 * Release the delegation from the signal handler so the competing
-	 * opener can proceed.  fcntl is not formally async-signal-safe, but
-	 * on Linux this is safe in practice and is the standard pattern for
-	 * delegation break handling.
-	 */
-	if (g_sigio_fd >= 0)
-		fcntl(g_sigio_fd, F_SETDELEG, &g_deleg_unlck);
 }
 
 static void usage(void)
@@ -361,8 +357,7 @@ static void case_sigio_on_write_break(const char *name)
 		return;
 	}
 
-	/* Set fd SIGIO owner and install handler before forking. */
-	g_sigio_fd = fd;
+	/* Install SIGIO handler and set fd's owner before forking. */
 	g_sigio_received = 0;
 
 	if (fcntl(fd, F_SETOWN, getpid()) != 0) {
@@ -414,8 +409,16 @@ static void case_sigio_on_write_break(const char *name)
 		sleep_ms(50);
 	}
 
-	/* Release delegation if handler did not (e.g., timeout). */
-	if (!g_sigio_received) {
+	/*
+	 * Always release the delegation from main control flow, whether
+	 * or not SIGIO arrived.  The handler only sets a flag now; the
+	 * actual F_SETDELEG(F_UNLCK) call must happen here to stay
+	 * async-signal-safe.  If SIGIO didn't arrive, the delegation may
+	 * have been silently returned by the client (recall without
+	 * SIGIO delivery) or the server never granted one -- either way
+	 * the F_UNLCK is harmless.
+	 */
+	{
 		struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
 		fcntl(fd, F_SETDELEG, &unlk);
 	}
@@ -431,7 +434,6 @@ static void case_sigio_on_write_break(const char *name)
 		       myname);
 
 	sigaction(SIGIO, &old_sa, NULL);
-	g_sigio_fd = -1;
 	close(fd);
 }
 
@@ -456,7 +458,6 @@ static void case_no_sigio_on_read(const char *name)
 		return;
 	}
 
-	g_sigio_fd = fd;
 	g_sigio_received = 0;
 
 	if (fcntl(fd, F_SETOWN, getpid()) != 0) {
@@ -506,14 +507,18 @@ static void case_no_sigio_on_read(const char *name)
 		       "concurrent readers)\n",
 		       myname);
 
-	/* Release delegation if it was not broken already. */
-	if (!g_sigio_received) {
+	/*
+	 * Release the delegation unconditionally from main control flow.
+	 * On success (no SIGIO, as expected) the F_UNLCK frees an
+	 * outstanding deleg; on the unexpected SIGIO path the client
+	 * already returned it and F_UNLCK is a harmless no-op.
+	 */
+	{
 		struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
 		fcntl(fd, F_SETDELEG, &unlk);
 	}
 
 	sigaction(SIGIO, &old_sa, NULL);
-	g_sigio_fd = -1;
 	close(fd);
 }
 
