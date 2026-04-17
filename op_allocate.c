@@ -94,6 +94,14 @@ static void case_extend_from_zero(const char *path, off_t len)
 
 	int fd = scratch_open("t10c1", name, sizeof(name));
 	int rc = do_fallocate(fd, 0, len);
+	if (rc == EINVAL) {
+		close(fd);
+		unlink(name);
+		skip("%s: posix_fallocate returned EINVAL -- NFS client "
+		     "does not map posix_fallocate(3) to the NFSv4.2 "
+		     "ALLOCATE op on this mount",
+		     myname);
+	}
 	if (rc != 0) {
 		complain("case1: posix_fallocate(0, %lld): %s",
 			 (long long)len, strerror(rc));
