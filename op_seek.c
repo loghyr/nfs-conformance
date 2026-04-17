@@ -20,7 +20,15 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
+/*
+ * _XOPEN_SOURCE 700 on FreeBSD suppresses __BSD_VISIBLE, which hides
+ * SEEK_HOLE / SEEK_DATA in <unistd.h>.  Those macros have lived in the
+ * BSD-visible namespace since FreeBSD 10; leave the default visibility
+ * intact there and set _XOPEN_SOURCE only on other platforms.
+ */
+#ifndef __FreeBSD__
 #define _XOPEN_SOURCE 700
+#endif
 #define _GNU_SOURCE /* Linux: SEEK_HOLE/DATA live in <unistd.h> */
 
 #include "tests.h"
