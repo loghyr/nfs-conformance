@@ -53,18 +53,24 @@ static const char *myname = "op_statx_btime";
 int main(void)
 {
 	skip("%s: birth-time query not available on this platform "
-	     "(Linux 4.11+ statx or FreeBSD 10+ st_birthtimespec required)",
+	     "(Linux 4.11+ statx or FreeBSD 10+ st_birthtim required)",
 	     myname);
 	return TEST_SKIP;
 }
 #elif defined(__FreeBSD__)
 
 /*
- * FreeBSD: struct stat carries st_birthtimespec directly (BSD extension).
- * The NFS client stores VNOVAL (-1) in st_birthtimespec.tv_sec when the
+ * FreeBSD: struct stat carries st_birthtim directly (BSD extension).
+ * The NFS client stores VNOVAL (-1) in st_birthtim.tv_sec when the
  * server does not return the NFSv4.2 time_create attribute; that shows
  * up as tv_sec <= 0 below.
+ *
+ * FreeBSD uses st_birthtim/st_mtim/st_ctim; map the macOS-style
+ * *timespec names used in the rest of this file.
  */
+#define st_birthtimespec st_birthtim
+#define st_mtimespec     st_mtim
+#define st_ctimespec     st_ctim
 
 static void usage(void)
 {
@@ -114,7 +120,7 @@ next:
 	if (Hflag) { usage(); return TEST_PASS; }
 
 	prelude(myname,
-		"lstat(st_birthtimespec) -> NFSv4.2 time_create (RFC 7862 S12.2)");
+		"lstat(st_birthtim) -> NFSv4.2 time_create (RFC 7862 S12.2)");
 	cd_or_skip(myname, dir, Nflag);
 
 	char name[64];
