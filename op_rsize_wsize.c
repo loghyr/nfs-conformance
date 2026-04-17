@@ -393,7 +393,10 @@ next:
 	g_wsize = (wv > 0) ? (size_t)wv : DEFAULT_RW_SIZE;
 
 	if (!Sflag) {
-		printf("TEST: %s: rsize=%zu wsize=%zu%s\n",
+		/* NOTE (not TEST): prelude() already emitted the TAP
+		 * header; a second 'TEST:' line confuses parsers that
+		 * treat it as a new subtest frame. */
+		printf("NOTE: %s: rsize=%zu wsize=%zu%s\n",
 		       myname, g_rsize, g_wsize,
 		       (rv <= 0 || wv <= 0) ? " (default assumed)" : "");
 	}

@@ -315,6 +315,11 @@ static void case_writev_plain_read(void)
 	close(fd);
 
 	int rfd = open(a, O_RDONLY);
+	if (rfd < 0) {
+		complain("case5: reopen: %s", strerror(errno));
+		unlink(a);
+		return;
+	}
 	char buf[13] = {0};
 	ssize_t r = read(rfd, buf, sizeof(buf) - 1);
 	close(rfd);

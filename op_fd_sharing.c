@@ -153,11 +153,14 @@ static void case_dup2_closes_target(void)
 		if (r != 3 || strncmp(buf, "abc", 3) != 0)
 			complain("case2: a contents after dup2+write: '%.*s'",
 				 (int)r, buf);
+	} else {
+		complain("case2: reopen a: %s", strerror(errno));
 	}
 
 out:
 	close(fd1);
-	/* fd2 may already be closed by dup2, or may be the dup. */
+	/* dup2 reassigned fd2 to the same open-file-description as fd1;
+	 * both fd numbers are valid and both need closing. */
 	close(fd2);
 	unlink(a);
 	unlink(b);

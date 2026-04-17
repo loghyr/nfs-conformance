@@ -243,23 +243,26 @@ static void case_fsync_bounded(void)
  */
 static void case_error_propagates(void)
 {
-	char name[64];
-	int fd = scratch_open("t_soft.ep", name, sizeof(name));
-	close(fd);
-	unlink(name);
-
 	/*
-	 * fd is now closed.  Write to it -- must return -1 with EBADF.
-	 * This catches a (hypothetical) implementation that silently
-	 * swallows write errors and returns 0 bytes written.
+	 * Write to a definitely-invalid fd -- must return -1 with
+	 * EBADF.  This catches a (hypothetical) implementation that
+	 * silently swallows write errors and returns 0 bytes written.
+	 *
+	 * Use a sentinel -1 rather than a freshly-closed fd: in a
+	 * single-threaded context close+write-to-same-number is safe,
+	 * but any future addition of a signal handler or pthread that
+	 * opens an fd between close() and write() could reuse the
+	 * slot and the write would succeed against an unrelated
+	 * object -- false PASS of the errno-propagation assertion.
 	 */
+	int bad_fd = -1;
 	unsigned char b = 0xAB;
-	ssize_t r = write(fd, &b, 1);
+	ssize_t r = write(bad_fd, &b, 1);
 	if (r >= 0)
-		complain("case4: write to closed fd returned %zd "
+		complain("case4: write to invalid fd returned %zd "
 			 "(expected -1 / EBADF)", r);
 	else if (errno != EBADF)
-		complain("case4: write to closed fd: %s (expected EBADF)",
+		complain("case4: write to invalid fd: %s (expected EBADF)",
 			 strerror(errno));
 	/* EBADF: correct. */
 }
