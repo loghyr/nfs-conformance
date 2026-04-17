@@ -282,42 +282,64 @@ static void case_eacces(void)
 static void case_long_name(void)
 {
 	char name[512];
-	memset(name, 'L', 255);
-	name[255] = '\0';
+	int server_name_max = 255;
+
+	/*
+	 * Positive assertion: a NAME_MAX-length (255-byte) name is
+	 * accepted.  If the server caps below 255, drop the floor
+	 * until we find the largest name it accepts -- so the
+	 * negative assertion below still has a "one byte past the
+	 * server's limit" to reject.
+	 */
+	memset(name, 'L', (size_t)server_name_max);
+	name[server_name_max] = '\0';
 
 	unlink(name);
 	int fd = open(name, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	while (fd < 0 && errno == ENAMETOOLONG && server_name_max > 8) {
+		server_name_max--;
+		memset(name, 'L', (size_t)server_name_max);
+		name[server_name_max] = '\0';
+		unlink(name);
+		fd = open(name, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	}
 	if (fd < 0) {
-		if (errno == ENAMETOOLONG) {
-			if (!Sflag)
-				printf("NOTE: %s: case7 server NAME_MAX < 255 "
-				       "(%s)\n", myname, strerror(errno));
-			return;
-		}
-		complain("case7: open(255-char name): %s", strerror(errno));
+		complain("case7: could not create any name <= 255 chars: %s",
+			 strerror(errno));
 		return;
 	}
+	if (!Sflag && server_name_max != 255)
+		printf("NOTE: %s: case7 server NAME_MAX = %d (< 255); "
+		       "negative assertion will probe %d+1\n",
+		       myname, server_name_max, server_name_max);
 
 	struct stat st;
 	if (stat(name, &st) != 0)
-		complain("case7: stat(255-char name): %s", strerror(errno));
+		complain("case7: stat(%d-char name): %s",
+			 server_name_max, strerror(errno));
 
 	close(fd);
 	unlink(name);
 
-	memset(name, 'L', 256);
-	name[256] = '\0';
+	/*
+	 * Negative assertion: one byte over the server's actual limit
+	 * MUST be rejected.  Without this the positive-only path would
+	 * report "ok" without exercising the length check at all.
+	 */
+	int too_long = server_name_max + 1;
+	memset(name, 'L', (size_t)too_long);
+	name[too_long] = '\0';
 	errno = 0;
 	fd = open(name, O_RDWR | O_CREAT | O_TRUNC, 0644);
 	if (fd >= 0) {
-		if (!Sflag)
-			printf("NOTE: %s: case7 server allowed 256-byte "
-			       "component name (NAME_MAX > 255)\n", myname);
+		complain("case7: server accepted %d-byte name where %d is "
+			 "the server-reported maximum",
+			 too_long, server_name_max);
 		close(fd);
 		unlink(name);
 	} else if (errno != ENAMETOOLONG) {
-		complain("case7: expected ENAMETOOLONG for 256-char name, "
-			 "got %s", strerror(errno));
+		complain("case7: expected ENAMETOOLONG for %d-char name, "
+			 "got %s", too_long, strerror(errno));
 	}
 }
 
