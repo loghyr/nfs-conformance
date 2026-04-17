@@ -286,9 +286,18 @@ static void case_not_directory(void)
 	if (dp) {
 		complain("case5: fdopendir on regular file succeeded "
 			 "(expected ENOTDIR)");
-		closedir(dp);
-	} else if (errno != ENOTDIR) {
-		complain("case5: expected ENOTDIR, got %s", strerror(errno));
+		closedir(dp);      /* closedir() owns the fd in this path */
+	} else {
+		/*
+		 * fdopendir() returned NULL, which means it did NOT take
+		 * ownership of fd -- close it ourselves on BOTH the
+		 * expected-ENOTDIR path and the unexpected-errno path.
+		 * Previously only the else-if branch closed it, leaking
+		 * one fd on every successful run of the case.
+		 */
+		if (errno != ENOTDIR)
+			complain("case5: expected ENOTDIR, got %s",
+				 strerror(errno));
 		close(fd);
 	}
 
