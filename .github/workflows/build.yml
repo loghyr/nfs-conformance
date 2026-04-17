@@ -35,6 +35,8 @@ jobs:
       - name: install prove (Perl TAP harness)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y perl
+      - name: check-triage (R-TRIAGE-1)
+        run: scripts/check-triage.sh
       - name: make
         run: make
       - name: make check

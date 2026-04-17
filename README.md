@@ -493,6 +493,29 @@ The install script copies wrappers into `tests/nfs/`, registers the
 `nfs-conformance` group in `doc/group-names.txt`, and prints the
 `make` command to regenerate `tests/nfs/group.list`.
 
+## Triage and contributing
+
+When a test fails and you need to know what it means, see
+[`docs/TRIAGE.md`](docs/TRIAGE.md) — keyed by test name AND by
+failure symptom substring, with likely causes and diagnostic next
+steps.
+
+Contributors, human or AI, must read
+[`docs/REVIEWER-RULES.md`](docs/REVIEWER-RULES.md) before opening
+a PR.  The short version:
+
+- Every new test ships with a matching `TRIAGE.md` subsection.
+- Every edit that changes a `complain()` string updates the
+  matching `TRIAGE.md` row in the same commit.
+- Tests must build on Linux / FreeBSD / macOS with both GNU make
+  and bmake.
+- Run `make check CHECK_DIR=/tmp` locally before opening a PR;
+  local failures are test bugs, not NFS findings.
+
+`scripts/check-triage.sh` verifies that every `op_*` in the
+Makefile's `TESTS` list has at least a short-form entry in
+`TRIAGE.md`.
+
 ## License
 
 Dual-licensed: `BSD-2-Clause OR GPL-2.0-only` at your option.  This
