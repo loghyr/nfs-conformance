@@ -87,7 +87,9 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
-#define _DEFAULT_SOURCE     /* for realpath declaration on some glibc versions */
+/* _DEFAULT_SOURCE and _XOPEN_SOURCE=700 are set globally in the
+ * Makefile (needed for realpath on some glibc versions, and for
+ * BSD/XSI extensions elsewhere in the suite). */
 
 #include "tests.h"
 

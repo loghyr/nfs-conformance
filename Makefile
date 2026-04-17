@@ -33,11 +33,16 @@ CC         ?= cc
 # BSD make's default CFLAGS ("-O2 -pipe") is preserved, GNU make's
 # default (empty) gets a sensible set.
 #
-# _XOPEN_SOURCE=700 exposes the XSI surface (S_IFMT, S_IFLNK, setenv,
-# strdup, ...) on FreeBSD, which otherwise hides these when
-# _POSIX_C_SOURCE is defined.  On glibc and Darwin it is either
-# equivalent to _POSIX_C_SOURCE=200809L or a harmless superset.
-CFLAGS     += -g -Wall -Wextra -Wno-unused-parameter -std=gnu11 -D_XOPEN_SOURCE=700
+# Feature-test macros:
+#   _XOPEN_SOURCE=700   FreeBSD: expose the XSI surface (S_IFMT,
+#                       S_IFLNK, setenv, strdup, ...) that strict
+#                       _POSIX_C_SOURCE hides.  glibc: implies
+#                       _POSIX_C_SOURCE=200809L.  Darwin: harmless.
+#   _DEFAULT_SOURCE     glibc: expose BSD extensions (strsep, ...)
+#                       that _XOPEN_SOURCE=700 alone hides.
+#                       Unknown / ignored on FreeBSD and Darwin.
+CFLAGS     += -g -Wall -Wextra -Wno-unused-parameter -std=gnu11 \
+              -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE
 LDFLAGS    +=
 PREFIX     ?= /usr/local
 libexecdir ?= $(PREFIX)/libexec
