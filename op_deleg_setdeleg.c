@@ -75,6 +75,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -109,6 +110,21 @@ int main(void)
 #define F_GETDELEG (1024 + 15)
 #endif
 
+/*
+ * Both F_SETDELEG and F_GETDELEG take a pointer to struct delegation
+ * (defined in <linux/fcntl.h> on kernel >= 6.x).  Define a local copy
+ * here so the file compiles against any kernel header version; on older
+ * kernels F_SETDELEG returns EINVAL/ENOSYS before touching the struct.
+ */
+struct nfc_deleg {
+	uint32_t d_flags; /* must be 0 */
+	uint16_t d_type;  /* F_RDLCK, F_WRLCK, or F_UNLCK */
+	uint16_t d_pad;   /* must be 0 */
+};
+
+/* Pre-built unlock struct for use in the signal handler. */
+static const struct nfc_deleg g_deleg_unlck = { 0, F_UNLCK, 0 };
+
 /* Global flag set by the SIGIO handler in cases 5 and 6. */
 static volatile sig_atomic_t g_sigio_fd = -1;
 static volatile sig_atomic_t g_sigio_received = 0;
@@ -123,7 +139,7 @@ static void sigio_handler(int sig __attribute__((unused)))
 	 * delegation break handling.
 	 */
 	if (g_sigio_fd >= 0)
-		fcntl(g_sigio_fd, F_SETDELEG, F_UNLCK);
+		fcntl(g_sigio_fd, F_SETDELEG, &g_deleg_unlck);
 }
 
 static void usage(void)
@@ -146,7 +162,8 @@ static void usage(void)
  */
 static int try_setdeleg(int fd, int ltype, const char *ctx)
 {
-	if (fcntl(fd, F_SETDELEG, ltype) == 0)
+	struct nfc_deleg d = { 0, (uint16_t)ltype, 0 };
+	if (fcntl(fd, F_SETDELEG, &d) == 0)
 		return 0;
 	if (errno == EINVAL || errno == ENOSYS) {
 		skip("%s: F_SETDELEG returned %s -- kernel does not "
@@ -184,15 +201,16 @@ static void case_read_delegation(const char *name)
 		return;
 	}
 
-	int got = fcntl(fd, F_GETDELEG);
-	if (got < 0) {
+	struct nfc_deleg gd = { 0 };
+	if (fcntl(fd, F_GETDELEG, &gd) < 0) {
 		complain("case1: F_GETDELEG: %s", strerror(errno));
-	} else if (got != F_RDLCK) {
+	} else if (gd.d_type != F_RDLCK) {
 		complain("case1: F_GETDELEG returned %d, expected F_RDLCK (%d)",
-			 got, F_RDLCK);
+			 (int)gd.d_type, F_RDLCK);
 	}
 
-	if (fcntl(fd, F_SETDELEG, F_UNLCK) != 0)
+	struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
+	if (fcntl(fd, F_SETDELEG, &unlk) != 0)
 		complain("case1: F_SETDELEG F_UNLCK: %s", strerror(errno));
 
 	close(fd);
@@ -213,15 +231,16 @@ static void case_write_delegation(const char *name)
 		return;
 	}
 
-	int got = fcntl(fd, F_GETDELEG);
-	if (got < 0) {
+	struct nfc_deleg gd = { 0 };
+	if (fcntl(fd, F_GETDELEG, &gd) < 0) {
 		complain("case2: F_GETDELEG: %s", strerror(errno));
-	} else if (got != F_WRLCK) {
+	} else if (gd.d_type != F_WRLCK) {
 		complain("case2: F_GETDELEG returned %d, expected F_WRLCK (%d)",
-			 got, F_WRLCK);
+			 (int)gd.d_type, F_WRLCK);
 	}
 
-	if (fcntl(fd, F_SETDELEG, F_UNLCK) != 0)
+	struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
+	if (fcntl(fd, F_SETDELEG, &unlk) != 0)
 		complain("case2: F_SETDELEG F_UNLCK: %s", strerror(errno));
 
 	close(fd);
@@ -261,7 +280,8 @@ static void case_setlease_interop(const char *name)
 			       myname, lease, F_RDLCK);
 	}
 
-	if (fcntl(fd, F_SETDELEG, F_UNLCK) != 0)
+	struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
+	if (fcntl(fd, F_SETDELEG, &unlk) != 0)
 		complain("case3: F_SETDELEG F_UNLCK: %s", strerror(errno));
 
 	close(fd);
@@ -289,7 +309,8 @@ static void case_refused_with_writer(const char *name)
 		return;
 	}
 
-	int rc = fcntl(fd2, F_SETDELEG, F_RDLCK);
+	struct nfc_deleg rd = { 0, F_RDLCK, 0 };
+	int rc = fcntl(fd2, F_SETDELEG, &rd);
 	if (rc == -1 && (errno == EINVAL || errno == ENOSYS ||
 			  errno == EOPNOTSUPP)) {
 		/* Already handled by case 1's try_setdeleg; just close */
@@ -301,7 +322,8 @@ static void case_refused_with_writer(const char *name)
 			       "delegation despite concurrent O_RDWR opener -- "
 			       "server behaviour is permissive\n",
 			       myname);
-		fcntl(fd2, F_SETDELEG, F_UNLCK);
+		struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
+		fcntl(fd2, F_SETDELEG, &unlk);
 	} else {
 		complain("case4: F_SETDELEG: %s", strerror(errno));
 	}
@@ -345,7 +367,8 @@ static void case_sigio_on_write_break(const char *name)
 
 	if (fcntl(fd, F_SETOWN, getpid()) != 0) {
 		complain("case5: F_SETOWN: %s", strerror(errno));
-		fcntl(fd, F_SETDELEG, F_UNLCK);
+		struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
+		fcntl(fd, F_SETDELEG, &unlk);
 		close(fd);
 		return;
 	}
@@ -360,7 +383,8 @@ static void case_sigio_on_write_break(const char *name)
 	if (pid < 0) {
 		complain("case5: fork: %s", strerror(errno));
 		sigaction(SIGIO, &old_sa, NULL);
-		fcntl(fd, F_SETDELEG, F_UNLCK);
+		struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
+		fcntl(fd, F_SETDELEG, &unlk);
 		close(fd);
 		return;
 	}
@@ -391,8 +415,10 @@ static void case_sigio_on_write_break(const char *name)
 	}
 
 	/* Release delegation if handler did not (e.g., timeout). */
-	if (!g_sigio_received)
-		fcntl(fd, F_SETDELEG, F_UNLCK);
+	if (!g_sigio_received) {
+		struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
+		fcntl(fd, F_SETDELEG, &unlk);
+	}
 
 	int wstatus = 0;
 	waitpid(pid, &wstatus, 0);
@@ -435,7 +461,8 @@ static void case_no_sigio_on_read(const char *name)
 
 	if (fcntl(fd, F_SETOWN, getpid()) != 0) {
 		complain("case6: F_SETOWN: %s", strerror(errno));
-		fcntl(fd, F_SETDELEG, F_UNLCK);
+		struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
+		fcntl(fd, F_SETDELEG, &unlk);
 		close(fd);
 		return;
 	}
@@ -450,7 +477,8 @@ static void case_no_sigio_on_read(const char *name)
 	if (pid < 0) {
 		complain("case6: fork: %s", strerror(errno));
 		sigaction(SIGIO, &old_sa, NULL);
-		fcntl(fd, F_SETDELEG, F_UNLCK);
+		struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
+		fcntl(fd, F_SETDELEG, &unlk);
 		close(fd);
 		return;
 	}
@@ -479,8 +507,10 @@ static void case_no_sigio_on_read(const char *name)
 		       myname);
 
 	/* Release delegation if it was not broken already. */
-	if (!g_sigio_received)
-		fcntl(fd, F_SETDELEG, F_UNLCK);
+	if (!g_sigio_received) {
+		struct nfc_deleg unlk = { 0, F_UNLCK, 0 };
+		fcntl(fd, F_SETDELEG, &unlk);
+	}
 
 	sigaction(SIGIO, &old_sa, NULL);
 	g_sigio_fd = -1;
