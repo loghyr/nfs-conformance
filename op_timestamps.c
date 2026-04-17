@@ -334,8 +334,8 @@ static void case_link_ctime(void)
 static void case_rename_ctime(void)
 {
 	char a[64], b[64];
-	snprintf(a, sizeof(a), "t_ts.ra.%ld", (long)getpid());
-	snprintf(b, sizeof(b), "t_ts.rb.%ld", (long)getpid());
+	snprintf(a, sizeof(a), "t_ts.rn.a.%ld", (long)getpid());
+	snprintf(b, sizeof(b), "t_ts.rn.b.%ld", (long)getpid());
 	unlink(a); unlink(b);
 	if (create_file(a, 0) != 0) {
 		complain("case7: create: %s", strerror(errno));
