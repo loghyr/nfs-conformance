@@ -77,20 +77,50 @@ static void usage(void)
 }
 
 /*
- * do_ficlone -- call ioctl(FICLONE).  On EOPNOTSUPP / EXDEV /
- * ENOSYS call skip() -- those mean the backend cannot support
- * reflinks, which is a configuration fact, not a bug.
+ * do_ficlone -- call ioctl(FICLONE).  Used by the test cases AFTER
+ * feature_probe() has already passed, so unexpected errors here
+ * are real conformance failures -- the caller complains.
  */
 static int do_ficlone(int dfd, int sfd)
 {
 	if (ioctl(dfd, FICLONE, sfd) == 0)
 		return 0;
-	if (errno == EOPNOTSUPP || errno == EXDEV || errno == ENOSYS) {
-		skip("%s: FICLONE returned %s; backend does not support "
-		     "reflinks",
-		     myname, strerror(errno));
-	}
 	return -1;
+}
+
+/*
+ * feature_probe -- 1-byte FICLONE to detect unsupported backends.
+ * On EOPNOTSUPP / EXDEV / ENOSYS, unlink scratch files and skip.
+ * Must run BEFORE the test cases so an unsupported mount doesn't
+ * leak t15.src / t15.dst.
+ */
+static void feature_probe(int sfd, int dfd,
+			  const char *sname, const char *dname)
+{
+	unsigned char one = 0x42;
+	if (pwrite(sfd, &one, 1, 0) != 1)
+		bail("feature_probe: seed pwrite: %s", strerror(errno));
+	if (ftruncate(dfd, 1) != 0)
+		bail("feature_probe: ftruncate dst: %s", strerror(errno));
+	fdatasync(sfd);
+
+	if (ioctl(dfd, FICLONE, sfd) != 0) {
+		if (errno == EOPNOTSUPP || errno == EXDEV
+		    || errno == ENOSYS || errno == EINVAL) {
+			int e = errno;
+			close(sfd); close(dfd);
+			unlink(sname); unlink(dname);
+			errno = e;
+			skip("%s: FICLONE probe returned %s; backend does "
+			     "not support reflinks",
+			     myname, strerror(errno));
+		}
+		bail("feature_probe: FICLONE: %s", strerror(errno));
+	}
+
+	/* Rewind both for the real cases. */
+	ftruncate(sfd, 0);
+	ftruncate(dfd, 0);
 }
 
 static void case_basic_clone(int sfd, int dfd)
@@ -218,6 +248,8 @@ next:
 	char sname[64], dname[64];
 	int sfd = scratch_open("t15.src", sname, sizeof(sname));
 	int dfd = scratch_open("t15.dst", dname, sizeof(dname));
+
+	feature_probe(sfd, dfd, sname, dname);
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 

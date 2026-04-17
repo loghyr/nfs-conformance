@@ -115,7 +115,8 @@ static int cfr_all(int sfd, off_t *soff, int dfd, off_t *doff, size_t count,
  * two scratch files landed on different backing filesystems, which
  * means we can't meaningfully test COPY anyway.
  */
-static void feature_probe(int sfd, int dfd)
+static void feature_probe(int sfd, int dfd,
+			  const char *sname, const char *dname)
 {
 	unsigned char one = 0x42;
 	if (pwrite(sfd, &one, 1, 0) != 1)
@@ -128,6 +129,11 @@ static void feature_probe(int sfd, int dfd)
 	if (n < 0) {
 		if (errno == ENOSYS || errno == EOPNOTSUPP
 		    || errno == EXDEV) {
+			int e = errno;
+			/* skip() exits; unlink the scratch files first. */
+			close(sfd); close(dfd);
+			unlink(sname); unlink(dname);
+			errno = e;
 			skip("%s: copy_file_range probe returned %s",
 			     myname, strerror(errno));
 		}
@@ -290,7 +296,7 @@ next:
 	int sfd = scratch_open("t13.src", sname, sizeof(sname));
 	int dfd = scratch_open("t13.dst", dname, sizeof(dname));
 
-	feature_probe(sfd, dfd);
+	feature_probe(sfd, dfd, sname, dname);
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 

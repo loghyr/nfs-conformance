@@ -108,17 +108,22 @@ static uint64_t get_cookie(const char *path, const char *ctx, int *ok)
  * feature_probe -- verify the server actually returns change_attr
  * on THIS mount.  If it doesn't, we SKIP rather than FAIL -- many
  * older NFS servers and some non-Linux filesystems don't advertise
- * change_attr.  Must run before any cases.
+ * change_attr.  Must run before any cases.  Unlinks the scratch
+ * file before skip() since skip() exits.
  */
 static void feature_probe(const char *path)
 {
 	struct statx st;
 	if (statx(AT_FDCWD, path, 0, STATX_CHANGE_COOKIE, &st) != 0) {
+		int e = errno;
+		unlink(path);
+		errno = e;
 		skip("%s: statx failed: %s (kernel/mount may not support "
 		     "STATX_CHANGE_COOKIE)",
 		     myname, strerror(errno));
 	}
 	if (!(st.stx_mask & STATX_CHANGE_COOKIE)) {
+		unlink(path);
 		skip("%s: server did not return STATX_CHANGE_COOKIE "
 		     "(change attribute not advertised)",
 		     myname);

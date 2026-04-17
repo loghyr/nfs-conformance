@@ -159,8 +159,10 @@ next:
 		 * Server or FS does not surface time_create.  Not a
 		 * failure -- NFSv4.2 servers are free not to track it,
 		 * and the Linux client fills stx_btime only when the
-		 * attribute is returned.
+		 * attribute is returned.  Unlink the scratch file before
+		 * skip() (which exits) so we don't leave litter behind.
 		 */
+		unlink(name);
 		skip("%s: server did not return STATX_BTIME (time_create "
 		     "not advertised)",
 		     myname);
