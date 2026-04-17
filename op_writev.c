@@ -338,10 +338,16 @@ static void case_zero_length_in_middle(void)
 		complain("case6: create: %s", strerror(errno));
 		return;
 	}
+	/*
+	 * POSIX allows iov_base to be invalid when iov_len is 0, but
+	 * some older BSDs return EFAULT on NULL + 0.  Use a real
+	 * byte to be uniformly safe.
+	 */
 	char b1[] = "XY", b3[] = "Z";
+	char unused_byte = 0;
 	struct iovec wv[3] = {
 		{ b1, 2 },
-		{ NULL, 0 },              /* zero-length, valid per POSIX */
+		{ &unused_byte, 0 },      /* zero-length; POSIX-legal no-op */
 		{ b3, 1 },
 	};
 	ssize_t w = writev(fd, wv, 3);

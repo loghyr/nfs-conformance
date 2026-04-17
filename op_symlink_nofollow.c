@@ -183,6 +183,21 @@ static void case_utimensat_nofollow(void)
 	struct timespec ts_target[2] = {{ 500, 0 }, { 500, 0 }};
 	utimensat(AT_FDCWD, target, ts_target, 0);
 
+	/*
+	 * Observe the ACTUAL target mtime the server stored as our
+	 * baseline.  Some servers coarsen or adjust timestamps on
+	 * close / flush, so the value may not be exactly 500 -- but
+	 * it must not CHANGE after the subsequent link-nofollow
+	 * utimensat.  Compare to the observed baseline, not the
+	 * literal 500.
+	 */
+	struct stat st_baseline;
+	if (stat(target, &st_baseline) != 0) {
+		complain("case3: stat target baseline: %s", strerror(errno));
+		goto out;
+	}
+	time_t baseline_mtime = st_baseline.st_mtime;
+
 	/* Set the symlink's own timestamps via AT_SYMLINK_NOFOLLOW. */
 	struct timespec ts_link[2] = {{ 999, 111 }, { 999, 222 }};
 	if (utimensat(AT_FDCWD, linkname, ts_link, AT_SYMLINK_NOFOLLOW) != 0) {
@@ -204,10 +219,12 @@ static void case_utimensat_nofollow(void)
 		complain("case3: stat target: %s", strerror(errno));
 		goto out;
 	}
-	if (st_target.st_mtime != 500)
-		complain("case3: target mtime changed to %ld (expected 500 "
-			 "unchanged) — NFS server followed the symlink on "
-			 "SETATTR instead of operating on the symlink itself",
+	if (st_target.st_mtime != baseline_mtime)
+		complain("case3: target mtime changed from %ld to %ld "
+			 "(unchanged expected) — NFS server followed the "
+			 "symlink on SETATTR instead of operating on the "
+			 "symlink itself",
+			 (long)baseline_mtime,
 			 (long)st_target.st_mtime);
 
 out:

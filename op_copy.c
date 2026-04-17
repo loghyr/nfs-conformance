@@ -142,9 +142,14 @@ static void feature_probe(int sfd, int dfd,
 	if (n != 1)
 		bail("feature_probe: short copy of 1 byte (got %zd)", n);
 
-	/* Rewind both for the real cases. */
-	ftruncate(sfd, 0);
-	ftruncate(dfd, 0);
+	/*
+	 * Rewind both for the real cases.  An ftruncate failure here
+	 * is unusual after a pwrite+ftruncate that just succeeded,
+	 * but if it happens it will show up as a size mismatch in
+	 * case_simple rather than silently feeding stale state in.
+	 */
+	if (ftruncate(sfd, 0) != 0 || ftruncate(dfd, 0) != 0)
+		bail("feature_probe: rewind ftruncate: %s", strerror(errno));
 }
 
 static void case_simple(int sfd, int dfd)

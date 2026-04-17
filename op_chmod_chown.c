@@ -170,8 +170,15 @@ static void case_chmod_timestamps(void)
 		return;
 	}
 
+	/*
+	 * Second-precision regression-only check: a write that lands
+	 * in the same wall-clock second as the pre-stat will not
+	 * advance st_ctime at this granularity, but it also will not
+	 * regress.  Catching the regression is the portable assertion.
+	 * For nsec-precision checks see op_timestamps case3.
+	 */
 	if (st_after.st_ctime < st_before.st_ctime)
-		complain("case3: ctime did not advance after chmod");
+		complain("case3: ctime went backwards after chmod");
 	if (st_after.st_ino != st_before.st_ino)
 		complain("case3: inode changed after chmod");
 

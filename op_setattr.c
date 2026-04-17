@@ -250,9 +250,9 @@ static void case_utime_now(void)
 
 	struct timespec before;
 	clock_gettime(CLOCK_REALTIME, &before);
-	/* sleep 10ms so UTIME_NOW has a measurable forward move */
-	struct timespec ten_ms = { 0, 10 * 1000 * 1000 };
-	nanosleep(&ten_ms, NULL);
+	/* sleep 10ms so UTIME_NOW has a measurable forward move
+	 * (R-CODE-4: use the sleep_ms helper, not raw nanosleep). */
+	sleep_ms(10);
 
 	struct timespec ts[2] = {
 		{ .tv_nsec = UTIME_NOW },

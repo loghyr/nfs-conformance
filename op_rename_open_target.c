@@ -106,7 +106,7 @@ static void case_rename_over_open_target(void)
 	snprintf(b, sizeof(b), "t_rot.b.%ld", (long)getpid());
 	unlink(a); unlink(b);
 
-	if (create_with(a, "src") != 0 || create_with(b, "dst")) {
+	if (create_with(a, "src") != 0 || create_with(b, "dst") != 0) {
 		complain("case1: create: %s", strerror(errno));
 		unlink(a); unlink(b);
 		return;
@@ -205,7 +205,7 @@ static void case_silly_rename_style(void)
 	snprintf(b, sizeof(b), "t_rot.xb.%ld", (long)getpid());
 	unlink(a); unlink(b);
 
-	if (create_with(a, "orig-a") != 0 || create_with(b, "subst-b")) {
+	if (create_with(a, "orig-a") != 0 || create_with(b, "subst-b") != 0) {
 		complain("case3: create: %s", strerror(errno));
 		unlink(a); unlink(b);
 		return;

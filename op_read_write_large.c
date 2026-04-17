@@ -43,8 +43,11 @@
  * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
  */
 
-#define _GNU_SOURCE
-#define _DARWIN_C_SOURCE
+/* _XOPEN_SOURCE=700 and _DEFAULT_SOURCE come from the Makefile. */
+#define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+# define _DARWIN_C_SOURCE
+#endif
 #define _FILE_OFFSET_BITS 64
 
 #include "tests.h"

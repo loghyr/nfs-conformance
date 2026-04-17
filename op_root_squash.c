@@ -56,7 +56,14 @@ int Fflag = 0;
 int Nflag = 0;
 
 static const char *myname = "op_root_squash";
-static int squash_detected;  /* 1 = root_squash active */
+
+/*
+ * squash_detected: set by case_create_uid (case1), read by the
+ * subsequent cases.  -1 means "not yet determined" -- if case1 was
+ * skipped or failed, later cases treat squash mode as unknown and
+ * emit NOTE rather than asserting behavior that depends on it.
+ */
+static int squash_detected = -1;
 
 static void usage(void)
 {
@@ -116,7 +123,11 @@ static void case_chown_to_root(void)
 	errno = 0;
 	int rc = chown(name, 0, 0);
 
-	if (squash_detected) {
+	if (squash_detected < 0) {
+		if (!Sflag)
+			printf("NOTE: %s: case2 skipped -- case1 did not "
+			       "run so squash mode is unknown\n", myname);
+	} else if (squash_detected) {
 		if (rc == 0)
 			complain("case2: chown(root) succeeded under "
 				 "root_squash (expected EPERM)");
@@ -151,6 +162,14 @@ static void case_read_0600(void)
 	errno = 0;
 	fd = open(name, O_RDONLY);
 
+	if (squash_detected < 0) {
+		if (fd >= 0) close(fd);
+		if (!Sflag)
+			printf("NOTE: %s: case3 skipped -- squash mode "
+			       "undetermined\n", myname);
+		unlink(name);
+		return;
+	}
 	if (squash_detected) {
 		/*
 		 * Root is mapped to anonuid.  If the file is owned by
@@ -199,7 +218,11 @@ static void case_mkdir_uid(void)
 		return;
 	}
 
-	if (squash_detected) {
+	if (squash_detected < 0) {
+		if (!Sflag)
+			printf("NOTE: %s: case4 skipped -- squash mode "
+			       "undetermined\n", myname);
+	} else if (squash_detected) {
 		if (st.st_uid == 0)
 			complain("case4: dir owned by uid 0 despite "
 				 "root_squash (expected anonuid)");

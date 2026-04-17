@@ -151,10 +151,11 @@ static int dir_has_name_matching(const char *prefix)
 {
 	DIR *d = opendir(".");
 	if (!d) return -1;
+	size_t pfxlen = strlen(prefix);
 	struct dirent *e;
 	int found = 0;
 	while ((e = readdir(d)) != NULL) {
-		if (strncmp(e->d_name, prefix, strlen(prefix)) == 0) {
+		if (strncmp(e->d_name, prefix, pfxlen) == 0) {
 			found = 1;
 			break;
 		}

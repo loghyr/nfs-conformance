@@ -211,7 +211,7 @@ static void case_chmod_ctime(void)
 		return;
 	}
 	struct stat st0;
-	stat(a, &st0);
+	if (stat(a, &st0) != 0) { complain("stat(before): %s", strerror(errno)); unlink(a); return; }
 
 	struct timespec delay = { 0, 20 * 1000 * 1000 };
 	nanosleep(&delay, NULL);
@@ -222,7 +222,7 @@ static void case_chmod_ctime(void)
 	}
 
 	struct stat st1;
-	stat(a, &st1);
+	if (stat(a, &st1) != 0) { complain("stat(after): %s", strerror(errno)); unlink(a); return; }
 	if (!ts_gt(ST_CTIM(st1), ST_CTIM(st0)))
 		complain("case3: ctime did not advance after chmod");
 	if (ts_gt(ST_MTIM(st1), ST_MTIM(st0)))
@@ -242,7 +242,7 @@ static void case_chown_ctime(void)
 		return;
 	}
 	struct stat st0;
-	stat(a, &st0);
+	if (stat(a, &st0) != 0) { complain("stat(before): %s", strerror(errno)); unlink(a); return; }
 
 	struct timespec delay = { 0, 20 * 1000 * 1000 };
 	nanosleep(&delay, NULL);
@@ -262,7 +262,7 @@ static void case_chown_ctime(void)
 	}
 
 	struct stat st1;
-	stat(a, &st1);
+	if (stat(a, &st1) != 0) { complain("stat(after): %s", strerror(errno)); unlink(a); return; }
 	if (!ts_gt(ST_CTIM(st1), ST_CTIM(st0)))
 		complain("case4: ctime did not advance after chown");
 	if (ts_gt(ST_MTIM(st1), ST_MTIM(st0)))
@@ -280,7 +280,7 @@ static void case_truncate_mtime_ctime(void)
 		return;
 	}
 	struct stat st0;
-	stat(a, &st0);
+	if (stat(a, &st0) != 0) { complain("stat(before): %s", strerror(errno)); unlink(a); return; }
 
 	struct timespec delay = { 0, 20 * 1000 * 1000 };
 	nanosleep(&delay, NULL);
@@ -291,7 +291,7 @@ static void case_truncate_mtime_ctime(void)
 	}
 
 	struct stat st1;
-	stat(a, &st1);
+	if (stat(a, &st1) != 0) { complain("stat(after): %s", strerror(errno)); unlink(a); return; }
 	if (!ts_gt(ST_MTIM(st1), ST_MTIM(st0)))
 		complain("case5: mtime did not advance after truncate");
 	if (!ts_gt(ST_CTIM(st1), ST_CTIM(st0)))
@@ -311,7 +311,7 @@ static void case_link_ctime(void)
 		return;
 	}
 	struct stat st0;
-	stat(a, &st0);
+	if (stat(a, &st0) != 0) { complain("stat(before): %s", strerror(errno)); unlink(a); return; }
 
 	struct timespec delay = { 0, 20 * 1000 * 1000 };
 	nanosleep(&delay, NULL);
@@ -322,7 +322,7 @@ static void case_link_ctime(void)
 	}
 
 	struct stat st1;
-	stat(a, &st1);
+	if (stat(a, &st1) != 0) { complain("stat(after): %s", strerror(errno)); unlink(a); return; }
 	if (!ts_gt(ST_CTIM(st1), ST_CTIM(st0)))
 		complain("case6: ctime did not advance after link");
 	if (ts_gt(ST_MTIM(st1), ST_MTIM(st0)))
@@ -342,7 +342,7 @@ static void case_rename_ctime(void)
 		return;
 	}
 	struct stat st0;
-	stat(a, &st0);
+	if (stat(a, &st0) != 0) { complain("stat(before): %s", strerror(errno)); unlink(a); return; }
 
 	struct timespec delay = { 0, 20 * 1000 * 1000 };
 	nanosleep(&delay, NULL);
