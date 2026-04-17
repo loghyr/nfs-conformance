@@ -35,14 +35,7 @@
  *      where nbyte is greater than 0, write() shall mark for
  *      update the st_mtime and st_ctime fields of the file")
  *
- *   5. Change-attr monotonicity.  On Linux with statx, verify
- *      STATX_CHANGE_COOKIE (stx_change_attr) increments after a
- *      write.  Skipped on non-Linux or kernels without statx
- *      change-attr support.
- *      (Linux-specific: statx(2) STATX_CHANGE_COOKIE, Linux 6.6+;
- *      maps to NFSv4 change_attr4 attribute)
- *
- *   6. Uid/Gid preserved.  Create a file, fchown to current
+ *   5. Uid/Gid preserved.  Create a file, fchown to current
  *      uid/gid (no-op chown), stat, verify uid/gid unchanged.
  *      Exercises the SETATTR->GETATTR->VERIFY cycle the client
  *      runs internally after chown.
@@ -50,7 +43,13 @@
  *      IDs shall be set")
  *
  * Portable: POSIX.1-1990 S5.6.2 (stat) across Linux / FreeBSD /
- * macOS / Solaris.  Case 5 is Linux-only (statx).
+ * macOS / Solaris.
+ *
+ * (The former case 5, change-attr monotonicity via raw statx, was
+ * removed: its hand-rolled byte offset into struct statx pointed at
+ * stx_size, not stx_change_attr, so every write produced a spurious
+ * "PASS" regardless of server behaviour.  op_change_attr.c exercises
+ * STATX_CHANGE_COOKIE correctly via the typed kernel header.)
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -66,11 +65,6 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
-
-#ifdef __linux__
-#include <sys/syscall.h>
-#include <linux/stat.h>
-#endif
 
 int Hflag = 0;
 int Sflag = 0;
@@ -253,101 +247,6 @@ static void case_mtime_after_write(void)
 	unlink(name);
 }
 
-static void case_change_attr(void)
-{
-#ifndef __linux__
-	if (!Sflag)
-		printf("NOTE: %s: case5 skipped (statx not available on "
-		       "this platform)\n", myname);
-	return;
-#else
-	/*
-	 * Use raw syscall + raw buffer to avoid compile-time dependency
-	 * on a kernel that defines stx_change_attr (added in 6.6).
-	 * STATX_CHANGE_COOKIE = 0x40000000, and stx_change_attr sits
-	 * at byte offset 40 in struct statx as a __u64.
-	 */
-#ifndef STATX_CHANGE_COOKIE
-#define STATX_CHANGE_COOKIE 0x40000000U
-#endif
-#define STX_CHANGE_ATTR_OFF 40
-
-	char name[64];
-	snprintf(name, sizeof(name), "t_vf.ca.%ld", (long)getpid());
-	unlink(name);
-
-	int fd = open(name, O_RDWR | O_CREAT | O_TRUNC, 0644);
-	if (fd < 0) {
-		complain("case5: open: %s", strerror(errno));
-		return;
-	}
-
-	unsigned char sx1[256];
-	memset(sx1, 0, sizeof(sx1));
-	if (syscall(SYS_statx, AT_FDCWD, name, 0,
-		    STATX_CHANGE_COOKIE, sx1) != 0) {
-		if (errno == ENOSYS || errno == EINVAL) {
-			if (!Sflag)
-				printf("NOTE: %s: case5 skipped (statx/"
-				       "CHANGE_COOKIE not supported)\n",
-				       myname);
-			close(fd);
-			unlink(name);
-			return;
-		}
-		complain("case5: statx before: %s", strerror(errno));
-		close(fd);
-		unlink(name);
-		return;
-	}
-
-	/* stx_mask is at offset 0 as a __u32. */
-	uint32_t mask1;
-	memcpy(&mask1, sx1, sizeof(mask1));
-	if (!(mask1 & STATX_CHANGE_COOKIE)) {
-		if (!Sflag)
-			printf("NOTE: %s: case5 skipped (kernel did not "
-			       "return STATX_CHANGE_COOKIE)\n", myname);
-		close(fd);
-		unlink(name);
-		return;
-	}
-
-	uint64_t ca1;
-	memcpy(&ca1, sx1 + STX_CHANGE_ATTR_OFF, sizeof(ca1));
-
-	char buf[64];
-	memset(buf, 'C', sizeof(buf));
-	if (write(fd, buf, sizeof(buf)) != (ssize_t)sizeof(buf)) {
-		complain("case5: write: %s", strerror(errno));
-		close(fd);
-		unlink(name);
-		return;
-	}
-	close(fd);
-
-	unsigned char sx2[256];
-	memset(sx2, 0, sizeof(sx2));
-	if (syscall(SYS_statx, AT_FDCWD, name, 0,
-		    STATX_CHANGE_COOKIE, sx2) != 0) {
-		complain("case5: statx after: %s", strerror(errno));
-		unlink(name);
-		return;
-	}
-
-	uint64_t ca2;
-	memcpy(&ca2, sx2 + STX_CHANGE_ATTR_OFF, sizeof(ca2));
-
-	if (ca2 <= ca1)
-		complain("case5: change_attr did not increase after write "
-			 "(before=%llu, after=%llu)",
-			 (unsigned long long)ca1,
-			 (unsigned long long)ca2);
-
-	unlink(name);
-#endif
-}
-
 static void case_uid_gid_preserved(void)
 {
 	char name[64];
@@ -442,7 +341,6 @@ next:
 	RUN_CASE("case_size_after_write", case_size_after_write());
 	RUN_CASE("case_mode_after_chmod", case_mode_after_chmod());
 	RUN_CASE("case_mtime_after_write", case_mtime_after_write());
-	RUN_CASE("case_change_attr", case_change_attr());
 	RUN_CASE("case_uid_gid_preserved", case_uid_gid_preserved());
 
 	if (Tflag) {

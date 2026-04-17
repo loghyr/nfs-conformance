@@ -866,9 +866,9 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Tier**: SPEC (NFSv4 VERIFY / NVERIFY, RFC 7530 §18.28 / §18.19)
 
-**Asserts**: Attribute consistency across back-to-back stat calls. For Linux, also exercises `statx(STATX_CHANGE_COOKIE)` to detect NVERIFY optimization.
+**Asserts**: Attribute consistency across back-to-back stat calls plus mode / mtime / uid-gid round-trip.  (Change-attr monotonicity is covered separately by `op_change_attr`, which uses the typed kernel header rather than raw byte offsets.)
 
-**Cases**: `case_stat_consistency`, `case_size_after_write`, plus additional cases in source.
+**Cases**: `case_stat_consistency`, `case_size_after_write`, `case_mode_after_chmod`, `case_mtime_after_write`, `case_uid_gid_preserved`.
 
 **Failure patterns**
 
@@ -880,7 +880,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **False positives**: None on a quiet mount. On a mount with concurrent activity, attribute flips are possible and expected; run this test on a quiescent mount.
 
-**Environmental gates**: Some cases are Linux-only (STATX_CHANGE_COOKIE).
+**Environmental gates**: None.
 
 ---
 
