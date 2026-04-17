@@ -50,6 +50,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 ### Table of contents
 
 - [op_concurrent_writes](#op_concurrent_writes)
+- [op_aio_races](#op_aio_races)
 - [op_read_write](#op_read_write)
 - [op_overwrite](#op_overwrite)
 - [op_writev](#op_writev)
@@ -141,6 +142,29 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `bit-level corruption during concurrent overlapping writes` (case 4 only) | Bytes that are neither worker tag value. Real corruption — almost always NIC / TCP checksum offload bug or memory fault. | Run `ethtool -K <dev> tx off rx off` and re-test. Check `dmesg` for RDMA errors. |
 
 **False positives**: None known. This test has low noise — a FAIL is almost always meaningful.
+
+**Environmental gates**: None. Runs on any POSIX mount.
+
+---
+
+### <a id="op_aio_races"></a>op_aio_races
+
+**Tier**: POSIX (concurrent write vs truncate atomicity)
+
+**Asserts**: A pwrite racing against ftruncate(fd, 0) on the same file must leave the file in one of two legal states: (A) size 0 (truncate won) or (B) pwrite's written size with exactly the written pattern (pwrite won). Any other state — non-zero size with torn content, oversize, hole not zero-filled — is a bug. Derived from xfstests generic/114's AIO-sub-block vs truncate shape, re-expressed via fork+pwrite so the test stays portable (no libaio / librt dependency).
+
+**Cases**: `case_sub_block_vs_truncate` (512 B at offset 0), `case_extend_vs_truncate` (4 KiB at offset 4 KiB).
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `round %d: illegal size %lld (expected 0 or %lld) -- torn write / partial truncate` | Final file size is neither 0 nor the write's expected end. Server's WRITE and SETATTR(size=0) interleaved in a way that left a partial state. | Capture wire trace of the round. Look for a SETATTR(size=0) that was reordered after a WRITE without a cancelling effect. |
+| `round %d: pwrite won but content differs from pattern` | File size matches pwrite but bytes are torn. Most often: server's WRITE landed on a page that SETATTR(size=0) had partially zeroed. | Real integrity bug; this is the generic/114 class. |
+| `round %d: head [0..%lld) not zero after write-extend` | `case_extend_vs_truncate` only: after truncate-then-extend, the hole between offset 0 and the write offset must be zeros. Server left stale bytes. | Check server's sparse-write + truncate interaction. |
+| `round %d: child exited unexpectedly (status=0x##)` | Child's pwrite hit an error the test classifies as unexpected (not EBADF/EINTR/ENOENT). | Examine `errno` reported by child's exit path. Usually transient; investigate if persistent. |
+
+**False positives**: A race test is probabilistic. Many rounds without a FAIL does not prove absence of the bug — run under load (many parallel invocations, slow RPC path) to increase race surface.
 
 **Environmental gates**: None. Runs on any POSIX mount.
 
@@ -414,7 +438,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: `O_DIRECT` opens bypass the client page cache; writes land on the server immediately; a separate buffered reader sees the written bytes.
 
-**Cases**: `case_direct_open`, `case_direct_round_trip`, `case_direct_cross_visibility`, `case_direct_unaligned`, `case_direct_large`.
+**Cases**: `case_direct_open`, `case_direct_round_trip`, `case_direct_cross_visibility`, `case_direct_unaligned`, `case_direct_large`, `case_failed_write_no_stale_data` (generic/250).
 
 **Failure patterns**
 
@@ -424,6 +448,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case3: reader saw stale data (O_DIRECT write not reflected server-side)` | O_DIRECT write didn't reach the server before the fresh reader's GETATTR-then-READ. | Client O_DIRECT path didn't force WRITE+COMMIT. Check client's O_DIRECT implementation. |
 | `case3: reader saw short read` | Similar: server size attribute hadn't updated. | Same as above. |
 | `case2: data mismatch after O_DIRECT write + buffered read` | Round-trip corruption via O_DIRECT. | Very suspicious — check alignment, check cache coherence. |
+| `case6: pattern A corrupted at byte %zu after rejected unaligned write` | Rejected/partial O_DIRECT pwrite left torn content on disk — should be all-or-nothing. | Real integrity bug: capture both wire traces (the rejected WRITE and the subsequent READ) and compare. |
 
 **False positives**: O_DIRECT rejection (EINVAL) is reported as NOTE, not FAIL — expected on some servers.
 
@@ -544,11 +569,21 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Tier**: SPEC (NFSv4 COMMIT)
 
-**Asserts**: fsync(2) / fdatasync(2) trigger a COMMIT op that forces server write-back. Subsequent operations see the committed data.
+**Asserts**: fsync(2) / fdatasync(2) trigger a COMMIT op that forces server write-back. Subsequent operations see the committed data, and fsync also persists parent-directory mutations and fallocate allocations.
 
-**Failure patterns**: Data mismatch after fsync, or fsync return value of -1. Both point to server-side COMMIT handling.
+**Cases**: `case_fsync_roundtrip`, `case_fdatasync_roundtrip`, `case_log_style`, `case_fsync_ronly_fd`, `case_fsync_empty`, `case_fsync_after_unlink_hardlink` (generic/039), `case_fsync_after_fallocate` (generic/042).
 
-**Environmental gates**: None.
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `data mismatch at byte %zu after fsync` | Server COMMIT did not persist writes before returning, or client returned from fsync before receiving the COMMIT reply. | Server-side COMMIT handling; capture wire trace. |
+| `case6: b still present after fsync + reopen (unlink not persisted)` | Parent-directory unlink did not survive fsync on the sibling file. Server fsync scope too narrow, or client cached stale dirent. | Server: check whether fsync covers parent dir entry updates. Client: drop kernel NFS cache and retry. |
+| `case6: a.nlink=%ld after unlink of b (expected 1)` | nlink attribute stale on fresh fd. Server GETATTR returned old count. | Server change-attribute semantics; check whether unlink bumps the directory's change attr and inode attrs. |
+| `case7: stale content in fallocate-but-never-written range` | ALLOCATE exposed uninitialised backing bytes. Real integrity bug — server must zero-fill or reserve without exposing. | Capture a READ of the range via wire trace; compare what the server returns with the inode's allocated block state. |
+| `case7 posix_fallocate ... - skipping` | Environmental: macOS, or NFS server refuses ALLOCATE. | Not a failure. |
+
+**Environmental gates**: Case 7 skipped on macOS (no posix_fallocate) or when server rejects ALLOCATE.
 
 ---
 
@@ -777,7 +812,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: `copy_file_range(2)` maps to NFSv4.2 intra-server COPY. Data is transferred server-side (no round-trip through client memory) when source and destination are on the same server.
 
-**Cases**: `case_simple`, `case_offset`, `case_sparse_preservation`.
+**Cases**: `case_simple`, `case_offset`, `case_sparse_preservation`, `case_matrix_api` (generic/430).
 
 **Failure patterns**
 
@@ -787,6 +822,10 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `copy_file_range short (got %zu of %zu)` | Partial copy. POSIX allows but unusual on NFSv4.2 COPY. | Retry logic expected; record as NOTE or investigate if persistent. |
 | `case1: dst mismatch at byte %zu` | COPY corrupted data. Real server bug. | Extract the bad byte; compare with op_read_write case 3 for baseline data integrity. |
 | `case3: hole region in dst not zero-filled` | COPY didn't preserve sparse layout — or the hole was materialized as garbage. | Compare with `op_read_plus_sparse case_punch_middle`; if that passes, COPY-specific hole-handling bug. |
+| `case4a: copy_file_range(len=0) returned %zd (expected 0)` | Zero-length call doesn't short-circuit to 0. Kernel bug. | Check syscall entry, usually a missing `if (!len) return 0`. |
+| `case4b: unexpected errno ... (expected EINVAL)` | Non-zero flags argument not rejected. | Some older kernels accept unknown flags; if persistent on recent kernels, server/client API contract violation. |
+| `case4c: over-copy %zd > src %zu` | Returned more bytes than src holds. Really a bug. | Capture wire trace of COPY; check server's src-EOF handling. |
+| `case4c: EOF call returned %zd (expected 0)` | Second call past EOF should return 0; returned something else. | Server advances soff past EOF; should stop cleanly. |
 
 **False positives**: `copy_file_range` may fall back to a read/write loop on the client — all-zero hole preservation still required but may behave differently. Not a failure.
 
@@ -1473,6 +1512,15 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `OFD lock released by closing unrelated fd` | op_lock_posix | OFD owner-per-fd semantics violated |
 | `server did not honor FILE_SYNC` | op_sync_dsync | O_SYNC/O_DSYNC write returned before server committed |
 | `O_DIRECT write not reflected server-side` | op_direct_io | Client O_DIRECT path didn't force WRITE+COMMIT |
+| `pattern A corrupted at byte %zu after rejected unaligned write` | op_direct_io | Rejected O_DIRECT pwrite left torn content on disk (generic/250 shape) |
+| `b still present after fsync + reopen` | op_commit | Parent-directory unlink not persisted by fsync on the sibling file (generic/039) |
+| `stale content in fallocate-but-never-written range` | op_commit | Server exposed uninitialised disk bytes from an ALLOCATE-extended range (generic/042) |
+| `illegal size ... torn write / partial truncate` | op_aio_races | pwrite vs ftruncate race left file in an illegal mixed state (generic/114) |
+| `pwrite won but content differs from pattern` | op_aio_races | pwrite vs ftruncate race produced torn content (generic/114) |
+| `head [0..X) not zero after write-extend` | op_aio_races | Sparse-hole-after-truncate exposed stale bytes before write offset |
+| `non-zero flag accepted` | op_copy | copy_file_range unknown flag not rejected with EINVAL (generic/430) |
+| `over-copy ... > src` | op_copy | copy_file_range returned more bytes than source holds (generic/430) |
+| `EOF call returned ... (expected 0)` | op_copy | copy_file_range past EOF did not short-circuit to 0 (generic/430) |
 | `iovec ... ordering broken` | op_writev | Client writev fragmentation reordered iovec elements |
 | `overwrite lost` | op_overwrite | Client write-coalescing or server ordering dropped the overwrite |
 | `zero overwrite was dropped; original ... survived` | op_overwrite | Server dedup path mis-handling zero over allocated block |
