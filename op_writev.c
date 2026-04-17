@@ -44,6 +44,14 @@
 /* macOS: pwritev / preadv are POSIX.1-2008 but gated on _DARWIN_C_SOURCE. */
 #define _DARWIN_C_SOURCE
 #endif
+#if defined(__FreeBSD__)
+/*
+ * FreeBSD: pwritev / preadv live in <sys/uio.h> under __BSD_VISIBLE,
+ * which the Makefile's _XOPEN_SOURCE=700 + _POSIX_C_SOURCE=200809L
+ * flips off.  Same pattern as op_copy's copy_file_range fix.
+ */
+#define __BSD_VISIBLE 1
+#endif
 
 #include "tests.h"
 
