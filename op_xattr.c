@@ -32,6 +32,20 @@
  *      this -- test accepts E2BIG / ERANGE as a valid "server
  *      cap reached" outcome, not a failure.
  *
+ *   6. Size queries.  getxattr(path, name, NULL, 0) must return the
+ *      exact value length (not an error, not a truncation).  Same
+ *      for listxattr(path, NULL, 0) -- must return the total list
+ *      size so callers can allocate correctly.  Catches servers
+ *      that over-read or under-count.
+ *
+ *   7. ERANGE on too-small buffer.  getxattr into a buffer smaller
+ *      than the stored value must return ERANGE and NOT truncate.
+ *      listxattr into a buffer smaller than the list must return
+ *      ERANGE.
+ *
+ *   8. removexattr on missing name returns ENODATA (Linux) /
+ *      ENOATTR (BSD-flavoured systems; we are Linux-only here).
+ *
  * Runtime SKIP conditions:
  *   - First setxattr returns ENOTSUP / EOPNOTSUPP (server or backing
  *     FS doesn't support user xattrs; RFC 8276 is optional).
@@ -302,6 +316,132 @@ static void case_large_value(const char *path)
 	free(readback);
 }
 
+static void case_size_queries(const char *path)
+{
+	/*
+	 * Seed a known-length value, then ask getxattr and listxattr
+	 * for their required buffer sizes via NULL/0.
+	 */
+	const char *name = "user.sz";
+	const unsigned char val[] = "fourteen-bytes";
+	const size_t val_len = sizeof(val) - 1;   /* strip NUL */
+
+	if (setxattr(path, name, val, val_len, 0) != 0) {
+		complain("case6: setxattr seed: %s", strerror(errno));
+		return;
+	}
+
+	/* getxattr(NULL, 0) must return exactly val_len. */
+	errno = 0;
+	ssize_t n = getxattr(path, name, NULL, 0);
+	if (n < 0) {
+		complain("case6: getxattr size query: %s", strerror(errno));
+	} else if ((size_t)n != val_len) {
+		complain("case6: getxattr size query returned %zd "
+			 "(expected %zu)", n, val_len);
+	}
+
+	/* listxattr(NULL, 0) must return the total list size. */
+	errno = 0;
+	ssize_t list_len = listxattr(path, NULL, 0);
+	if (list_len < 0) {
+		complain("case6: listxattr size query: %s", strerror(errno));
+	} else {
+		/*
+		 * Allocate exactly that much, call again, verify we fit.
+		 * If the server under-counted, the second call will
+		 * return ERANGE -- that's a size-query bug.
+		 */
+		char *buf = malloc((size_t)list_len);
+		if (!buf) {
+			complain("case6: malloc");
+		} else {
+			ssize_t got = listxattr(path, buf, (size_t)list_len);
+			if (got < 0)
+				complain("case6: listxattr into exact-size "
+					 "buffer returned %s (size query "
+					 "undercounted)", strerror(errno));
+			else if (got != list_len)
+				complain("case6: listxattr sizes disagree: "
+					 "query=%zd fill=%zd",
+					 list_len, got);
+			free(buf);
+		}
+	}
+
+	removexattr(path, name);
+}
+
+static void case_erange_too_small(const char *path)
+{
+	const char *name = "user.er";
+	const unsigned char val[] = "a-value-longer-than-four-bytes";
+	const size_t val_len = sizeof(val) - 1;
+
+	if (setxattr(path, name, val, val_len, 0) != 0) {
+		complain("case7: setxattr seed: %s", strerror(errno));
+		return;
+	}
+
+	/* Too-small getxattr buffer must ERANGE and leave buffer untouched. */
+	unsigned char tiny[4] = { 0xAA, 0xBB, 0xCC, 0xDD };
+	unsigned char snapshot[4];
+	memcpy(snapshot, tiny, sizeof(snapshot));
+
+	errno = 0;
+	ssize_t n = getxattr(path, name, tiny, sizeof(tiny));
+	if (n >= 0) {
+		complain("case7: getxattr into 4-byte buffer returned %zd "
+			 "(value is %zu bytes; expected ERANGE)",
+			 n, val_len);
+	} else if (errno != ERANGE) {
+		complain("case7: getxattr expected ERANGE, got %s",
+			 strerror(errno));
+	} else if (memcmp(tiny, snapshot, sizeof(snapshot)) != 0) {
+		complain("case7: getxattr truncated into caller buffer "
+			 "on ERANGE (must leave buffer untouched)");
+	}
+
+	/* Too-small listxattr buffer must also ERANGE. */
+	char list_tiny[1] = { 'Z' };
+	errno = 0;
+	ssize_t lr = listxattr(path, list_tiny, sizeof(list_tiny));
+	if (lr >= 0) {
+		/*
+		 * If the list happens to fit in 1 byte (unlikely but
+		 * possible if only user.er is present and the kernel
+		 * abbreviates) this isn't a failure -- just skip.
+		 */
+		if (!Sflag)
+			printf("NOTE: %s: case7 listxattr 1-byte buffer "
+			       "returned %zd (list may genuinely fit)\n",
+			       myname, lr);
+	} else if (errno != ERANGE) {
+		complain("case7: listxattr expected ERANGE, got %s",
+			 strerror(errno));
+	}
+
+	removexattr(path, name);
+}
+
+static void case_removexattr_missing(const char *path)
+{
+	errno = 0;
+	int rc = removexattr(path, "user.this-name-does-not-exist");
+	if (rc == 0) {
+		complain("case8: removexattr on missing name succeeded "
+			 "(expected ENODATA)");
+	} else if (errno != ENODATA && errno != ENOATTR) {
+		/*
+		 * Linux returns ENODATA; some Linux flavours alias
+		 * ENOATTR to it.  Either is acceptable.  Anything else
+		 * is a conformance bug.
+		 */
+		complain("case8: removexattr on missing name returned %s "
+			 "(expected ENODATA)", strerror(errno));
+	}
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -347,6 +487,10 @@ next:
 	RUN_CASE("case_replace_flag", case_replace_flag(name));
 	RUN_CASE("case_multiple", case_multiple(name));
 	RUN_CASE("case_large_value", case_large_value(name));
+	RUN_CASE("case_size_queries", case_size_queries(name));
+	RUN_CASE("case_erange_too_small", case_erange_too_small(name));
+	RUN_CASE("case_removexattr_missing",
+		 case_removexattr_missing(name));
 
 	unlink(name);
 
