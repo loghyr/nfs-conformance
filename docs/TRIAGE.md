@@ -91,6 +91,11 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 - [op_verify](#op_verify)
 - [op_unlink](#op_unlink)
 - [op_read_write_large](#op_read_write_large)
+- [op_rename_atomic](#op_rename_atomic)
+- [op_symlink_nofollow](#op_symlink_nofollow)
+- [op_chmod_chown](#op_chmod_chown)
+- [op_seek](#op_seek)
+- [op_allocate](#op_allocate)
 - [Remaining tests (summary)](#remaining-tests)
 
 ---
@@ -897,15 +902,107 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 ---
 
+### <a id="op_rename_atomic"></a>op_rename_atomic
+
+**Tier**: SPEC (renameat2 / NFSv4 RENAME with atomic flags)
+
+**Asserts**: `renameat2(2)` with `RENAME_NOREPLACE` fails if target exists; with `RENAME_EXCHANGE` swaps two existing paths atomically. Client must pass these flags through to the server's RENAME op.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `RENAME_NOREPLACE not supported (returned Invalid argument)` | Client ≤6.0 does not pass renameat2 flags through to NFS; returns EINVAL. Auto-SKIPs. | Upgrade client to Linux 6.1+ and retest. |
+| `RENAME_NOREPLACE: target replaced despite flag` | Client accepted the flag but didn't enforce; or server silently ignored the atomicity flag. | Real conformance bug. |
+| `RENAME_EXCHANGE: paths not swapped atomically` | Exchange produced intermediate state; observer saw one path empty momentarily. | Server doesn't implement exchange atomically. |
+
+**Environmental gates**: Linux 6.1+ client + server that supports NFSv4 RENAME with flag passthrough.
+
+---
+
+### <a id="op_symlink_nofollow"></a>op_symlink_nofollow
+
+**Tier**: POSIX (AT_SYMLINK_NOFOLLOW + O_NOFOLLOW)
+
+**Asserts**: Syscalls that take `AT_SYMLINK_NOFOLLOW` (or the file descriptor equivalent `O_NOFOLLOW`) operate on the link itself, not the target. `fstatat`, `utimensat`, `fchownat`, `linkat` all must honor the flag. The most NFS-conformance-sensitive tests in this file are utimensat-nofollow (classic NFS server bug: timestamp change follows to target) and fchownat-nofollow (tar/rsync depend on this).
+
+**Cases**: See `op_symlink_nofollow.c` header.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `utimensat with AT_SYMLINK_NOFOLLOW advanced target mtime` | Server ignored the nofollow flag and modified the symlink target instead of the link. Classic NFSv4 SETATTR-on-link bug. | Real server bug. Verify against symlink inode via `lstat`. |
+| `fchownat with AT_SYMLINK_NOFOLLOW changed target ownership` | Same class. `tar -xp` and `rsync -l` rely on this. | Real server bug. |
+| `fstatat nofollow returned target mode` | Server returned the target's stat instead of the symlink's. | Server-side `AT_SYMLINK_NOFOLLOW` not honored. |
+| `linkat ... AT_SYMLINK_FOLLOW ...` | Hardlink to target vs to symlink distinction broken. | Server link path bug. |
+
+**Environmental gates**: None. Classic test — well-worth running first against any new server.
+
+---
+
+### <a id="op_chmod_chown"></a>op_chmod_chown
+
+**Tier**: POSIX (SETATTR with uid/gid mapping, setuid/setgid clearing)
+
+**Asserts**: chmod/chown round-trip; setuid/setgid bits are cleared when file ownership changes (POSIX security rule).
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `NOTE: case5/case6 chown(self) returned EINVAL (client-side idmap cannot resolve uid %u)` | Linux NFSv4 idmap sends owner as string `user@domain`; if rpc.idmapd can't resolve or domain mismatches, server returns NFS4ERR_BADOWNER → EINVAL. Handled as NOTE, not FAIL. | Start `rpc.idmapd` or `echo Y > /sys/module/nfs/parameters/nfs4_disable_idmapping` and remount. See README "Interpreting environmental NOTEs". |
+| `setuid/setgid not cleared after chown` | POSIX security rule violated. Server should strip S_ISUID/S_ISGID when chown changes the file owner. | Server bug. |
+| `chmod did not advance ctime` | ctime must advance per POSIX. | See op_timestamps for similar. |
+
+**Environmental gates**: idmap-related NOTEs are common and expected on Linux clients without idmapd.
+
+---
+
+### <a id="op_seek"></a>op_seek
+
+**Tier**: SPEC (NFSv4.2 SEEK, RFC 7862 §6; READ_PLUS §8 coverage shared with op_read_plus_sparse)
+
+**Asserts**: `lseek(SEEK_HOLE)` and `lseek(SEEK_DATA)` find the next hole/data boundary on a sparse file. Reads through holes return zeros.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `SEEK_HOLE at island0 reports premature hole` | Server returned a hole offset inside the data extent. | Server-side SEEK op returns wrong boundary. |
+| `SEEK_DATA past EOF: expected -1/ENXIO or %lld, got ...` | NFSv4.2 SEEK past EOF semantic: some servers set sr_eof=TRUE and return the file size; Linux client typically returns ENXIO via lseek. Both are accepted; third outcomes are bugs. | Inspect. |
+| `hole N not all zero` | Read through a hole returned garbage bytes. | Client or server sparse-read path broken. Cross-check with `op_read_plus_sparse`. |
+
+**Environmental gates**: `SEEK_HOLE`/`SEEK_DATA` required. macOS 10.15+ / Linux / FreeBSD 10+ / Solaris. Not set on FreeBSD under `_XOPEN_SOURCE=700` — Makefile guards with `#ifndef __FreeBSD__`.
+
+---
+
+### <a id="op_allocate"></a>op_allocate
+
+**Tier**: SPEC (NFSv4.2 ALLOCATE, RFC 7862 §4)
+
+**Asserts**: `posix_fallocate(3)` preallocates disk blocks, extends the file if needed, and fills the extension with zeros.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `SKIP: posix_fallocate returned EINVAL -- NFS client does not support ALLOCATE on this mount` | Client (e.g., FreeBSD) doesn't map posix_fallocate → ALLOCATE. Not a conformance failure; informational. | Upgrade client or accept the gap. |
+| `case1: allocated region not all zero` | ALLOCATE extended the file but the new bytes are garbage. | Server bug — ALLOCATE must zero-fill. |
+| `case1: size %lld != expected` | ALLOCATE didn't extend the file size. | Server handled ALLOCATE as a no-op; not compliant with RFC 7862. |
+| `NOTE: st_blocks == 0 after ALLOCATE -- suspicious` | Informational: the server may have treated ALLOCATE as a promise without actually allocating. Not a conformance failure per se. | None — record the server backend. |
+
+**Environmental gates**: Linux + server supporting NFSv4.2 ALLOCATE. Auto-skips on FreeBSD via EINVAL detection.
+
+---
+
 ### <a id="remaining-tests"></a>Remaining tests
 
 The following tests are thinner triage candidates — most either assert a single POSIX contract that's hard to get wrong, or mirror another triaged test. Refer to each test's `.c` file header for the full assertion matrix.
 
 - `op_access` — POSIX access(2) / faccessat. Errno mismatches point at client errno mapping.
-- `op_allocate` — posix_fallocate → NFSv4.2 ALLOCATE. EINVAL on FreeBSD auto-skips.
 - `op_at_variants` — `*at()` family with dirfds. Failures usually indicate dirfd handling bugs.
 - `op_change_attr` — statx(STATX_CHANGE_COOKIE). Reports server's NFSv4 change attr.
-- `op_chmod_chown` — SETATTR mode/uid/gid. idmap EINVAL handled as NOTE.
 - `op_deallocate` — FALLOC_FL_PUNCH_HOLE → DEALLOCATE. Linux only.
 - `op_directory` — O_DIRECTORY flag.
 - `op_fd_sharing` — dup/dup2/fork fd offset semantics.
@@ -920,13 +1017,11 @@ The following tests are thinner triage candidates — most either assert a singl
 - `op_owner_override` — Linux owner-override semantics (-P/-L modes).
 - `op_read_plus_sparse` — see dedicated section above.
 - `op_readdir` — basic readdir round-trip.
-- `op_rename_atomic` — renameat2 RENAME_NOREPLACE/EXCHANGE flags.
 - `op_rename_self` — rename of hardlinks to same inode (POSIX.1-2024).
-- `op_seek` — SEEK_HOLE / SEEK_DATA / READ_PLUS over holes.
 - `op_server_caps` — **probe**, not a test (see § 3).
 - `op_setattr` — SETATTR umbrella (chmod/chown/truncate/utimensat).
 - `op_statx_btime` — statx(STATX_BTIME) / st_birthtimespec.
-- `op_symlink` / `op_symlink_nofollow` — symlink + O_NOFOLLOW handling.
+- `op_symlink` — basic symlink + readlink.
 - `op_tmpfile` — Linux O_TMPFILE unnamed-create. Skips if server doesn't support.
 - `op_utimensat` — utimensat + UTIME_NOW / UTIME_OMIT / nsec.
 - `op_xattr` — user.* xattr round-trip (Linux).
@@ -972,6 +1067,12 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `hole region in dst not zero-filled` | op_copy | COPY lost sparse layout |
 | `readdir did not return %s` | op_unicode_names | UTF-8 name stored but not findable — normalization mismatch |
 | `st_ino changed between two stats` | op_verify | Attribute cache inconsistency / inode recycled |
+| `utimensat with AT_SYMLINK_NOFOLLOW advanced target mtime` | op_symlink_nofollow | Server ignored nofollow; modified target instead of link (classic NFS bug) |
+| `fchownat with AT_SYMLINK_NOFOLLOW changed target ownership` | op_symlink_nofollow | Same class — tar/rsync rely on this |
+| `RENAME_NOREPLACE not supported` | op_rename_atomic | Client < Linux 6.1 doesn't passthrough renameat2 flags — SKIP |
+| `setuid/setgid not cleared after chown` | op_chmod_chown | POSIX security rule: chown must clear S_ISUID/S_ISGID |
+| `SEEK_HOLE at island0 reports premature hole` | op_seek | Server returned a hole offset inside the data extent |
+| `allocated region not all zero` | op_allocate | ALLOCATE extended the file but didn't zero-fill the extension |
 
 ---
 
