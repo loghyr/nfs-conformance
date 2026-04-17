@@ -56,6 +56,29 @@ an early rule is blocked regardless of the later ones.
   in the table, or the test's assertion is muddled and needs
   tightening.
 
+- **R-TRIAGE-6**: When a case is **ported from another test suite**
+  (xfstests, LTP, pjdfstest, fsstress, …), the origin MUST be cited in
+  all three places a future reader might land:
+    - the `.c` source-file header comment for the case;
+    - the TRIAGE.md `**Cases**:` line (e.g., `case_foo (generic/039)`);
+    - the commit message introducing the case.
+  Cite the exact test number (`generic/039`, `syscalls/fsync01`), not
+  just the suite name.  This is what makes the adaptation reviewable:
+  a future reader can look up what the original actually asserted and
+  judge whether this case preserves that assertion.
+
+- **R-TRIAGE-7**: When the ported test's invariant is **not directly
+  expressible over NFS** (crash injection, dm-error, DAX, encryption),
+  the commit message and source-file header MUST spell out the
+  adaptation: what the original asserted, what NFS can actually
+  observe, and why the substitute is a faithful proxy.  Common
+  adaptations: "crash + mount-replay" → "close + fresh open forces
+  server-side READ"; "dm-error mid-txn" → "rejected unaligned
+  O_DIRECT write"; "kill -9 during fsync" → "fsync + close + drop
+  cache via reopen".  An adaptation without a stated rationale is
+  indistinguishable from a weaker assertion snuck in under a
+  well-known test name.
+
 ## Code
 
 - **R-CODE-1**: Every new `op_*` test MUST be portable in the same
