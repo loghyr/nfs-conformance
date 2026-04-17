@@ -98,6 +98,11 @@ static void case_punch_middle(void)
 		       "case1: pwrite tail") != 0) {
 		close(fd); unlink(f); return;
 	}
+	/* Flush to server so the hole exists server-side before we
+	 * observe it via pread / SEEK_HOLE. */
+	if (fdatasync(fd) != 0 && !Sflag)
+		printf("NOTE: %s: case1 fdatasync: %s\n",
+		       myname, strerror(errno));
 
 	/* Read the 12 KiB hole between offsets 4096 and 16384. */
 	unsigned char hole[12288];
@@ -131,6 +136,9 @@ static void case_giant_hole(void)
 		complain("case2: ftruncate(1 MiB): %s", strerror(errno));
 		close(fd); unlink(f); return;
 	}
+	if (fdatasync(fd) != 0 && !Sflag)
+		printf("NOTE: %s: case2 fdatasync: %s\n",
+		       myname, strerror(errno));
 
 	unsigned char chunk[65536];
 	for (int i = 0; i < 16; i++) {
@@ -174,6 +182,9 @@ static void case_cross_boundary(void)
 		       "case3: pwrite middle") != 0) {
 		close(fd); unlink(f); return;
 	}
+	if (fdatasync(fd) != 0 && !Sflag)
+		printf("NOTE: %s: case3 fdatasync: %s\n",
+		       myname, strerror(errno));
 
 	unsigned char rbuf[16384];
 	if (pread_all(fd, rbuf, sizeof(rbuf), 0,
@@ -215,6 +226,9 @@ static void case_pure_hole(void)
 		complain("case4: ftruncate: %s", strerror(errno));
 		close(fd); unlink(f); return;
 	}
+	if (fdatasync(fd) != 0 && !Sflag)
+		printf("NOTE: %s: case4 fdatasync: %s\n",
+		       myname, strerror(errno));
 
 	unsigned char rbuf[65536];
 	if (pread_all(fd, rbuf, sizeof(rbuf), 0,
@@ -252,6 +266,9 @@ static void case_tail_hole(void)
 		complain("case5: ftruncate: %s", strerror(errno));
 		close(fd); unlink(f); return;
 	}
+	if (fdatasync(fd) != 0 && !Sflag)
+		printf("NOTE: %s: case5 fdatasync: %s\n",
+		       myname, strerror(errno));
 
 	/* Read the 60 KiB tail starting at offset 4 KiB. */
 	const size_t tail_len = 65536 - 4096;
@@ -316,6 +333,9 @@ static void case_alternating_stripes(void)
 		complain("case6: ftruncate: %s", strerror(errno));
 		close(fd); unlink(f); return;
 	}
+	if (fdatasync(fd) != 0 && !Sflag)
+		printf("NOTE: %s: case6 fdatasync: %s\n",
+		       myname, strerror(errno));
 
 	unsigned char *big = malloc(total);
 	if (!big) {
