@@ -166,11 +166,23 @@ static void case_parent_nlink(void)
 		return;
 	}
 
-	if (st_after.st_nlink != st_before.st_nlink)
-		complain("case4: parent nlink changed from %lu to %lu "
-			 "(regular-file unlink must not change parent nlink)",
-			 (unsigned long)st_before.st_nlink,
-			 (unsigned long)st_after.st_nlink);
+	/*
+	 * Traditional Unix: removing a regular file does not change
+	 * its parent directory's st_nlink (that counter tracks
+	 * subdirectories plus `.` / `..`).  POSIX.1-2008 does NOT
+	 * mandate this model -- modern filesystems like APFS count
+	 * all dirents in st_nlink, so any unlink changes it.  Match
+	 * the NOTE-instead-of-FAIL pattern already used by
+	 * op_rename_nlink cases 1/2 for the same concern.
+	 */
+	if (st_after.st_nlink != st_before.st_nlink && !Sflag)
+		printf("NOTE: %s: case4 parent nlink %lu -> %lu "
+		       "after regular-file unlink "
+		       "(traditional Unix expects no change; APFS and some "
+		       "modern filesystems count every dirent in st_nlink)\n",
+		       myname,
+		       (unsigned long)st_before.st_nlink,
+		       (unsigned long)st_after.st_nlink);
 }
 
 static void case_parent_timestamps(void)

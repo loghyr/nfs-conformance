@@ -226,8 +226,11 @@ static void case_file_no_nlink_change(void)
 	close(fd);
 
 	struct stat st_src_before, st_dst_before;
-	stat(src, &st_src_before);
-	stat(dst, &st_dst_before);
+	if (stat(src, &st_src_before) != 0 || stat(dst, &st_dst_before) != 0) {
+		complain("case3: stat before rename: %s", strerror(errno));
+		unlink(sf); unlink(df); rmdir(src); rmdir(dst);
+		return;
+	}
 
 	if (rename(sf, df) != 0) {
 		complain("case3: rename: %s", strerror(errno));
@@ -236,18 +239,34 @@ static void case_file_no_nlink_change(void)
 	}
 
 	struct stat st_src_after, st_dst_after;
-	stat(src, &st_src_after);
-	stat(dst, &st_dst_after);
+	if (stat(src, &st_src_after) != 0 || stat(dst, &st_dst_after) != 0) {
+		complain("case3: stat after rename: %s", strerror(errno));
+		unlink(df); rmdir(src); rmdir(dst);
+		return;
+	}
 
-	if (st_src_after.st_nlink != st_src_before.st_nlink)
-		complain("case3: src nlink changed from %lu to %lu "
-			 "(regular file rename must not change parent nlink)",
-			 (unsigned long)st_src_before.st_nlink,
-			 (unsigned long)st_src_after.st_nlink);
-	if (st_dst_after.st_nlink != st_dst_before.st_nlink)
-		complain("case3: dst nlink changed from %lu to %lu",
-			 (unsigned long)st_dst_before.st_nlink,
-			 (unsigned long)st_dst_after.st_nlink);
+	/*
+	 * See cases 1/2 note: POSIX.1-2008 does NOT require the
+	 * traditional "regular-file rename does not change parent
+	 * directory nlink" convention.  APFS and some other modern
+	 * filesystems count every dirent (not just subdirs) in the
+	 * directory's st_nlink, so a file rename legitimately changes
+	 * both src and dst parent nlink.  Align case 3's severity with
+	 * cases 1/2 -- NOTE, not FAIL.
+	 */
+	if (st_src_after.st_nlink != st_src_before.st_nlink && !Sflag)
+		printf("NOTE: %s: case3 src parent nlink %lu -> %lu "
+		       "after file rename "
+		       "(traditional Unix expects no change)\n",
+		       myname,
+		       (unsigned long)st_src_before.st_nlink,
+		       (unsigned long)st_src_after.st_nlink);
+	if (st_dst_after.st_nlink != st_dst_before.st_nlink && !Sflag)
+		printf("NOTE: %s: case3 dst parent nlink %lu -> %lu "
+		       "after file rename\n",
+		       myname,
+		       (unsigned long)st_dst_before.st_nlink,
+		       (unsigned long)st_dst_after.st_nlink);
 
 	unlink(df);
 	rmdir(src);
