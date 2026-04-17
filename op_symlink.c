@@ -234,6 +234,12 @@ static void case_long_target(void)
 	}
 
 	char *buf = malloc(want + 16);
+	if (!buf) {
+		complain("case4: malloc(%zu)", want + 16);
+		free(target);
+		unlink(linkname);
+		return;
+	}
 	ssize_t n = readlinkat(AT_FDCWD, linkname, buf, want + 15);
 	if (n < 0) {
 		complain("case4: readlinkat long: %s", strerror(errno));
