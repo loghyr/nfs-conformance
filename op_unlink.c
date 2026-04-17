@@ -136,10 +136,6 @@ static void case_enoent(void)
 static void case_parent_nlink(void)
 {
 	struct stat st_before, st_after;
-	if (stat(".", &st_before) != 0) {
-		complain("case4: stat(.) before: %s", strerror(errno));
-		return;
-	}
 
 	char a[64];
 	snprintf(a, sizeof(a), "t_ul.nl.%ld", (long)getpid());
@@ -149,6 +145,11 @@ static void case_parent_nlink(void)
 	if (fd < 0) { complain("case4: create: %s", strerror(errno)); return; }
 	close(fd);
 
+	/*
+	 * Measure parent nlink AFTER the create, not before, so the
+	 * pre/post comparison attributes any change to the unlink
+	 * rather than to the transient create-then-unlink pair.
+	 */
 	if (stat(".", &st_before) != 0) {
 		complain("case4: stat(.) before unlink: %s", strerror(errno));
 		unlink(a);

@@ -323,6 +323,10 @@ static void case_splitting(void)
 
 	/* Middle [40,50) should be acquirable by the child. */
 	pid = fork();
+	if (pid < 0) {
+		complain("case4: fork2: %s", strerror(errno));
+		close(fd); unlink(a); return;
+	}
 	if (pid == 0) {
 		int cfd = open(a, O_RDWR);
 		if (cfd < 0) _exit(70);

@@ -85,6 +85,12 @@ static int write_tiny(const char *path, const char *body)
 
 static ssize_t read_all(const char *path, char *buf, size_t cap)
 {
+	/* `cap - 1` underflows to SIZE_MAX when cap < 2; the caller
+	 * contract is "cap is buffer size including room for NUL". */
+	if (cap < 2) {
+		complain("read_all(%s): cap=%zu too small", path, cap);
+		return -1;
+	}
 	int fd = open(path, O_RDONLY);
 	if (fd < 0) {
 		complain("open(%s) for read: %s", path, strerror(errno));

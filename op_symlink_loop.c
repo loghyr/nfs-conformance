@@ -62,8 +62,8 @@ static void usage(void)
 static void case_two_cycle(void)
 {
 	char a[64], b[64];
-	snprintf(a, sizeof(a), "t_sl.2a.%ld", (long)getpid());
-	snprintf(b, sizeof(b), "t_sl.2b.%ld", (long)getpid());
+	snprintf(a, sizeof(a), "t_sll.2a.%ld", (long)getpid());
+	snprintf(b, sizeof(b), "t_sll.2b.%ld", (long)getpid());
 	unlink(a); unlink(b);
 
 	if (symlink(b, a) != 0 || symlink(a, b) != 0) {
@@ -88,9 +88,9 @@ static void case_two_cycle(void)
 static void case_three_cycle(void)
 {
 	char a[64], b[64], c[64];
-	snprintf(a, sizeof(a), "t_sl.3a.%ld", (long)getpid());
-	snprintf(b, sizeof(b), "t_sl.3b.%ld", (long)getpid());
-	snprintf(c, sizeof(c), "t_sl.3c.%ld", (long)getpid());
+	snprintf(a, sizeof(a), "t_sll.3a.%ld", (long)getpid());
+	snprintf(b, sizeof(b), "t_sll.3b.%ld", (long)getpid());
+	snprintf(c, sizeof(c), "t_sll.3c.%ld", (long)getpid());
 	unlink(a); unlink(b); unlink(c);
 
 	if (symlink(b, a) != 0 || symlink(c, b) != 0 ||
@@ -124,13 +124,13 @@ static void case_long_chain(void)
 
 	/* Clean up from prior aborted run. */
 	for (int i = 0; i <= N; i++) {
-		snprintf(name, sizeof(name), "t_sl.c%02d.%ld", i, pid);
+		snprintf(name, sizeof(name), "t_sll.c%02d.%ld", i, pid);
 		unlink(name);
 	}
 
 	for (int i = 0; i < N; i++) {
-		snprintf(name, sizeof(name), "t_sl.c%02d.%ld", i, pid);
-		snprintf(next, sizeof(next), "t_sl.c%02d.%ld", i + 1, pid);
+		snprintf(name, sizeof(name), "t_sll.c%02d.%ld", i, pid);
+		snprintf(next, sizeof(next), "t_sll.c%02d.%ld", i + 1, pid);
 		if (symlink(next, name) != 0) {
 			complain("case3: symlink chain at %d: %s",
 				 i, strerror(errno));
@@ -139,7 +139,7 @@ static void case_long_chain(void)
 	}
 
 	errno = 0;
-	snprintf(name, sizeof(name), "t_sl.c00.%ld", pid);
+	snprintf(name, sizeof(name), "t_sll.c00.%ld", pid);
 	int fd = open(name, O_RDONLY);
 	if (fd >= 0) {
 		complain("case3: open(long chain head) succeeded");
@@ -151,7 +151,7 @@ static void case_long_chain(void)
 
 cleanup:
 	for (int i = 0; i <= N; i++) {
-		snprintf(name, sizeof(name), "t_sl.c%02d.%ld", i, pid);
+		snprintf(name, sizeof(name), "t_sll.c%02d.%ld", i, pid);
 		unlink(name);
 	}
 }
@@ -159,7 +159,7 @@ cleanup:
 static void case_self_loop(void)
 {
 	char a[64];
-	snprintf(a, sizeof(a), "t_sl.s.%ld", (long)getpid());
+	snprintf(a, sizeof(a), "t_sll.s.%ld", (long)getpid());
 	unlink(a);
 
 	if (symlink(a, a) != 0) {

@@ -172,9 +172,11 @@ static void case_extends_past_eof(void)
 	fsync_or_note(fd, 3);
 
 	struct stat st;
-	if (fstat(fd, &st) != 0 || st.st_size != 8)
+	if (fstat(fd, &st) != 0)
+		complain("case3: fstat: %s", strerror(errno));
+	else if (st.st_size != 8)
 		complain("case3: size %lld (expected 8)",
-			 (long long)(fstat(fd, &st) == 0 ? st.st_size : -1));
+			 (long long)st.st_size);
 
 	char got[9] = {0};
 	if (pread(fd, got, 8, 0) != 8)

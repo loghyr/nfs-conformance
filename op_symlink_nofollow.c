@@ -37,10 +37,10 @@
  *      ownership.
  *
  *   5. [POSIX] linkat(AT_SYMLINK_FOLLOW) vs default.  linkat
- *      without AT_SYMLINK_FOLLOW should create a hard link to the
+ *      without AT_SYMLINK_FOLLOW should create a hard linkname to the
  *      symlink itself (or EOPNOTSUPP on filesystems that don't
  *      support hard links to symlinks).  With AT_SYMLINK_FOLLOW,
- *      the hard link should reference the target.
+ *      the hard linkname should reference the target.
  *
  *   6. [POSIX] O_NOFOLLOW.  open(symlink, O_NOFOLLOW) must fail
  *      with ELOOP (or EMLINK on some systems).  Exercises the NFS
@@ -90,27 +90,27 @@ static void usage(void)
 
 static void case_fstatat_nofollow(void)
 {
-	char target[64], link[64];
+	char target[64], linkname[64];
 	snprintf(target, sizeof(target), "t_snf.t1.%ld", (long)getpid());
-	snprintf(link, sizeof(link), "t_snf.l1.%ld", (long)getpid());
-	unlink(target); unlink(link);
+	snprintf(linkname, sizeof(linkname), "t_snf.l1.%ld", (long)getpid());
+	unlink(target); unlink(linkname);
 
 	int fd = open(target, O_RDWR | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0) { complain("case1: create target: %s", strerror(errno)); return; }
 	close(fd);
 
-	if (symlink(target, link) != 0) {
+	if (symlink(target, linkname) != 0) {
 		complain("case1: symlink: %s", strerror(errno));
 		unlink(target);
 		return;
 	}
 
 	struct stat st_follow, st_nofollow;
-	if (fstatat(AT_FDCWD, link, &st_follow, 0) != 0) {
+	if (fstatat(AT_FDCWD, linkname, &st_follow, 0) != 0) {
 		complain("case1: fstatat(follow): %s", strerror(errno));
 		goto out;
 	}
-	if (fstatat(AT_FDCWD, link, &st_nofollow, AT_SYMLINK_NOFOLLOW) != 0) {
+	if (fstatat(AT_FDCWD, linkname, &st_nofollow, AT_SYMLINK_NOFOLLOW) != 0) {
 		complain("case1: fstatat(AT_SYMLINK_NOFOLLOW): %s",
 			 strerror(errno));
 		goto out;
@@ -125,31 +125,31 @@ static void case_fstatat_nofollow(void)
 			 "the symlink on GETATTR)",
 			 st_nofollow.st_mode & S_IFMT);
 out:
-	unlink(link);
+	unlink(linkname);
 	unlink(target);
 }
 
 static void case_fstatat_dangling(void)
 {
-	char link[64];
-	snprintf(link, sizeof(link), "t_snf.d2.%ld", (long)getpid());
-	unlink(link);
+	char linkname[64];
+	snprintf(linkname, sizeof(linkname), "t_snf.d2.%ld", (long)getpid());
+	unlink(linkname);
 
-	if (symlink("nonexistent_target_xyzzy", link) != 0) {
+	if (symlink("nonexistent_target_xyzzy", linkname) != 0) {
 		complain("case2: symlink: %s", strerror(errno));
 		return;
 	}
 
 	struct stat st;
 	errno = 0;
-	if (fstatat(AT_FDCWD, link, &st, 0) == 0)
+	if (fstatat(AT_FDCWD, linkname, &st, 0) == 0)
 		complain("case2: fstatat(follow) on dangling symlink "
 			 "succeeded (expected ENOENT)");
 	else if (errno != ENOENT)
 		complain("case2: fstatat(follow) expected ENOENT, got %s",
 			 strerror(errno));
 
-	if (fstatat(AT_FDCWD, link, &st, AT_SYMLINK_NOFOLLOW) != 0) {
+	if (fstatat(AT_FDCWD, linkname, &st, AT_SYMLINK_NOFOLLOW) != 0) {
 		complain("case2: fstatat(AT_SYMLINK_NOFOLLOW) on dangling "
 			 "symlink: %s (must succeed — operates on the "
 			 "symlink itself)", strerror(errno));
@@ -159,21 +159,21 @@ static void case_fstatat_dangling(void)
 		complain("case2: fstatat(NOFOLLOW) on dangling expected "
 			 "S_IFLNK, got 0%o", st.st_mode & S_IFMT);
 out:
-	unlink(link);
+	unlink(linkname);
 }
 
 static void case_utimensat_nofollow(void)
 {
-	char target[64], link[64];
+	char target[64], linkname[64];
 	snprintf(target, sizeof(target), "t_snf.t3.%ld", (long)getpid());
-	snprintf(link, sizeof(link), "t_snf.l3.%ld", (long)getpid());
-	unlink(target); unlink(link);
+	snprintf(linkname, sizeof(linkname), "t_snf.l3.%ld", (long)getpid());
+	unlink(target); unlink(linkname);
 
 	int fd = open(target, O_RDWR | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0) { complain("case3: create: %s", strerror(errno)); return; }
 	close(fd);
 
-	if (symlink(target, link) != 0) {
+	if (symlink(target, linkname) != 0) {
 		complain("case3: symlink: %s", strerror(errno));
 		unlink(target);
 		return;
@@ -185,7 +185,7 @@ static void case_utimensat_nofollow(void)
 
 	/* Set the symlink's own timestamps via AT_SYMLINK_NOFOLLOW. */
 	struct timespec ts_link[2] = {{ 999, 111 }, { 999, 222 }};
-	if (utimensat(AT_FDCWD, link, ts_link, AT_SYMLINK_NOFOLLOW) != 0) {
+	if (utimensat(AT_FDCWD, linkname, ts_link, AT_SYMLINK_NOFOLLOW) != 0) {
 		if (errno == ENOTSUP || errno == EOPNOTSUPP) {
 			if (!Sflag)
 				printf("NOTE: %s: case3 utimensat "
@@ -211,7 +211,7 @@ static void case_utimensat_nofollow(void)
 			 (long)st_target.st_mtime);
 
 out:
-	unlink(link);
+	unlink(linkname);
 	unlink(target);
 }
 
@@ -224,10 +224,10 @@ static void case_fchownat_nofollow(void)
 		return;
 	}
 
-	char target[64], link[64];
+	char target[64], linkname[64];
 	snprintf(target, sizeof(target), "t_snf.t4.%ld", (long)getpid());
-	snprintf(link, sizeof(link), "t_snf.l4.%ld", (long)getpid());
-	unlink(target); unlink(link);
+	snprintf(linkname, sizeof(linkname), "t_snf.l4.%ld", (long)getpid());
+	unlink(target); unlink(linkname);
 
 	int fd = open(target, O_RDWR | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0) { complain("case4: create: %s", strerror(errno)); return; }
@@ -236,14 +236,14 @@ static void case_fchownat_nofollow(void)
 	/* Ensure target is owned by root. */
 	chown(target, 0, 0);
 
-	if (symlink(target, link) != 0) {
+	if (symlink(target, linkname) != 0) {
 		complain("case4: symlink: %s", strerror(errno));
 		unlink(target);
 		return;
 	}
 
 	/* Change symlink ownership to nobody (65534). */
-	if (fchownat(AT_FDCWD, link, 65534, 65534,
+	if (fchownat(AT_FDCWD, linkname, 65534, 65534,
 		     AT_SYMLINK_NOFOLLOW) != 0) {
 		if (errno == EOPNOTSUPP || errno == ENOTSUP) {
 			if (!Sflag)
@@ -259,8 +259,8 @@ static void case_fchownat_nofollow(void)
 
 	/* Verify symlink owned by nobody. */
 	struct stat st_link;
-	if (lstat(link, &st_link) != 0) {
-		complain("case4: lstat link: %s", strerror(errno));
+	if (lstat(linkname, &st_link) != 0) {
+		complain("case4: lstat linkname: %s", strerror(errno));
 		goto out;
 	}
 	if (st_link.st_uid != 65534)
@@ -280,30 +280,30 @@ static void case_fchownat_nofollow(void)
 			 "(tar/rsync depend on this for archive fidelity)",
 			 (unsigned)st_target.st_uid);
 out:
-	unlink(link);
+	unlink(linkname);
 	unlink(target);
 }
 
 static void case_linkat_follow(void)
 {
-	char target[64], link[64], hardlink[64];
+	char target[64], linkname[64], hardlink[64];
 	snprintf(target, sizeof(target), "t_snf.t5.%ld", (long)getpid());
-	snprintf(link, sizeof(link), "t_snf.l5.%ld", (long)getpid());
+	snprintf(linkname, sizeof(linkname), "t_snf.l5.%ld", (long)getpid());
 	snprintf(hardlink, sizeof(hardlink), "t_snf.h5.%ld", (long)getpid());
-	unlink(target); unlink(link); unlink(hardlink);
+	unlink(target); unlink(linkname); unlink(hardlink);
 
 	int fd = open(target, O_RDWR | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0) { complain("case5: create: %s", strerror(errno)); return; }
 	close(fd);
 
-	if (symlink(target, link) != 0) {
+	if (symlink(target, linkname) != 0) {
 		complain("case5: symlink: %s", strerror(errno));
 		unlink(target);
 		return;
 	}
 
-	/* linkat with AT_SYMLINK_FOLLOW: hard link to the TARGET. */
-	if (linkat(AT_FDCWD, link, AT_FDCWD, hardlink,
+	/* linkat with AT_SYMLINK_FOLLOW: hard linkname to the TARGET. */
+	if (linkat(AT_FDCWD, linkname, AT_FDCWD, hardlink,
 		   AT_SYMLINK_FOLLOW) != 0) {
 		complain("case5: linkat(AT_SYMLINK_FOLLOW): %s",
 			 strerror(errno));
@@ -322,17 +322,17 @@ static void case_linkat_follow(void)
 			 (unsigned long)st_hardlink.st_ino,
 			 (unsigned long)st_target.st_ino);
 
-	/* linkat without AT_SYMLINK_FOLLOW: hard link to the SYMLINK.
+	/* linkat without AT_SYMLINK_FOLLOW: hard linkname to the SYMLINK.
 	 * Many filesystems (including NFS) don't support hard links to
 	 * symlinks — EOPNOTSUPP/EPERM is acceptable. */
 	char hardlink2[64];
 	snprintf(hardlink2, sizeof(hardlink2), "t_snf.h5b.%ld", (long)getpid());
 	unlink(hardlink2);
 	errno = 0;
-	if (linkat(AT_FDCWD, link, AT_FDCWD, hardlink2, 0) == 0) {
+	if (linkat(AT_FDCWD, linkname, AT_FDCWD, hardlink2, 0) == 0) {
 		struct stat st_hl2;
 		if (lstat(hardlink2, &st_hl2) == 0 && S_ISLNK(st_hl2.st_mode)) {
-			/* Good: created a hard link to the symlink itself. */
+			/* Good: created a hard linkname to the symlink itself. */
 		} else if (lstat(hardlink2, &st_hl2) == 0 &&
 			   st_hl2.st_ino == st_target.st_ino) {
 			if (!Sflag)
@@ -349,29 +349,29 @@ static void case_linkat_follow(void)
 
 out:
 	unlink(hardlink);
-	unlink(link);
+	unlink(linkname);
 	unlink(target);
 }
 
 static void case_open_nofollow(void)
 {
-	char target[64], link[64];
+	char target[64], linkname[64];
 	snprintf(target, sizeof(target), "t_snf.t6.%ld", (long)getpid());
-	snprintf(link, sizeof(link), "t_snf.l6.%ld", (long)getpid());
-	unlink(target); unlink(link);
+	snprintf(linkname, sizeof(linkname), "t_snf.l6.%ld", (long)getpid());
+	unlink(target); unlink(linkname);
 
 	int fd = open(target, O_RDWR | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0) { complain("case6: create: %s", strerror(errno)); return; }
 	close(fd);
 
-	if (symlink(target, link) != 0) {
+	if (symlink(target, linkname) != 0) {
 		complain("case6: symlink: %s", strerror(errno));
 		unlink(target);
 		return;
 	}
 
 	errno = 0;
-	fd = open(link, O_RDONLY | O_NOFOLLOW);
+	fd = open(linkname, O_RDONLY | O_NOFOLLOW);
 	if (fd >= 0) {
 		complain("case6: open(symlink, O_NOFOLLOW) succeeded "
 			 "(must fail with ELOOP)");
@@ -380,7 +380,7 @@ static void case_open_nofollow(void)
 		complain("case6: expected ELOOP, got %s", strerror(errno));
 	}
 
-	unlink(link);
+	unlink(linkname);
 	unlink(target);
 }
 

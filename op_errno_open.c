@@ -72,6 +72,26 @@ static int expect_errno(int rc, int expected, const char *label)
 	return 1;
 }
 
+/*
+ * expect_errno_set -- accept any of a small allowlist.  Used where
+ * POSIX is permissive about which specific errno applies (e.g.,
+ * open(dir, O_WRONLY) -> EISDIR or EACCES per implementation).
+ */
+static int expect_errno_set(int rc, const int *allowed, int n_allowed,
+			    const char *label)
+{
+	if (rc >= 0) {
+		complain("%s: unexpectedly succeeded (fd=%d)", label, rc);
+		close(rc);
+		return 0;
+	}
+	for (int i = 0; i < n_allowed; i++)
+		if (errno == allowed[i]) return 1;
+	complain("%s: got %s (%d); expected one of the allowed errnos",
+		 label, strerror(errno), errno);
+	return 0;
+}
+
 static void case_missing_enoent(void)
 {
 	char a[64];
@@ -123,8 +143,11 @@ static void case_dir_wronly_eisdir(void)
 		return;
 	}
 	errno = 0;
-	expect_errno(open(d, O_WRONLY), EISDIR,
-		     "case4: open directory, O_WRONLY");
+	/* POSIX allows EISDIR; some older Unixes and NFS servers
+	 * return EACCES (permission model fires first). */
+	int allowed_w[] = { EISDIR, EACCES };
+	expect_errno_set(open(d, O_WRONLY), allowed_w, 2,
+			 "case4: open directory, O_WRONLY");
 	rmdir(d);
 }
 
@@ -138,7 +161,8 @@ static void case_dir_rdwr_eisdir(void)
 		return;
 	}
 	errno = 0;
-	expect_errno(open(d, O_RDWR), EISDIR,
+	int allowed_rw[] = { EISDIR, EACCES };
+	expect_errno_set(open(d, O_RDWR), allowed_rw, 2,
 		     "case5: open directory, O_RDWR");
 	rmdir(d);
 }
