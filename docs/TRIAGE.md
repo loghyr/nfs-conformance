@@ -84,6 +84,13 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 - [op_deleg_recall](#op_deleg_recall)
 - [op_deleg_read](#op_deleg_read)
 - [op_delegation_write](#op_delegation_write)
+- [op_copy](#op_copy)
+- [op_clone](#op_clone)
+- [op_truncate_grow](#op_truncate_grow)
+- [op_unicode_names](#op_unicode_names)
+- [op_verify](#op_verify)
+- [op_unlink](#op_unlink)
+- [op_read_write_large](#op_read_write_large)
 - [Remaining tests (summary)](#remaining-tests)
 
 ---
@@ -735,6 +742,161 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 ---
 
+### <a id="op_copy"></a>op_copy
+
+**Tier**: SPEC (NFSv4.2 COPY, RFC 7862 §7)
+
+**Asserts**: `copy_file_range(2)` maps to NFSv4.2 intra-server COPY. Data is transferred server-side (no round-trip through client memory) when source and destination are on the same server.
+
+**Cases**: `case_simple`, `case_offset`, `case_sparse_preservation`.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `copy_file_range: %s` | Syscall error — most commonly EXDEV (cross-filesystem) or EOPNOTSUPP (client doesn't map to COPY). | Check `statfs` — are src and dst on same mount? Check mount is NFSv4.2. |
+| `copy_file_range short (got %zu of %zu)` | Partial copy. POSIX allows but unusual on NFSv4.2 COPY. | Retry logic expected; record as NOTE or investigate if persistent. |
+| `case1: dst mismatch at byte %zu` | COPY corrupted data. Real server bug. | Extract the bad byte; compare with op_read_write case 3 for baseline data integrity. |
+| `case3: hole region in dst not zero-filled` | COPY didn't preserve sparse layout — or the hole was materialized as garbage. | Compare with `op_read_plus_sparse case_punch_middle`; if that passes, COPY-specific hole-handling bug. |
+
+**False positives**: `copy_file_range` may fall back to a read/write loop on the client — all-zero hole preservation still required but may behave differently. Not a failure.
+
+**Environmental gates**: Linux 4.5+, FreeBSD 13+, same-filesystem mount. Skips otherwise.
+
+---
+
+### <a id="op_clone"></a>op_clone
+
+**Tier**: SPEC (NFSv4.2 CLONE, RFC 7862 §5)
+
+**Asserts**: `ioctl(FICLONE)` creates a copy-on-write clone. Modifications to src do not affect dst.
+
+**Cases**: `case_basic_clone`, `case_cow_semantics`.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `ioctl(FICLONE): %s` | Filesystem doesn't support reflink. Common errors: EOPNOTSUPP, EINVAL, EXDEV. | Check backend FS (`mount | grep <fs>`); reflink requires btrfs, xfs with reflink=1, ZFS, or an NFSv4.2 server that supports CLONE over such a backend. |
+| `case2: dst was affected by src mutation` | COW broken — dst shares storage with src AND isn't marked CoW on write. Real bug; clones must isolate writes. | Inspect server-side reflink handling. Check kernel version. |
+| `clone content mismatch at byte %zu` | Initial clone didn't copy all bytes. | Server CLONE op implementation bug. |
+
+**False positives**: FICLONE skip on non-reflink FS is expected and self-documents.
+
+**Environmental gates**: Linux + reflink FS (btrfs / xfs-reflink / zfs) required.
+
+---
+
+### <a id="op_truncate_grow"></a>op_truncate_grow
+
+**Tier**: POSIX (SETATTR(size) hole-creating grow, RFC 7530 §5.8.1.5)
+
+**Asserts**: `ftruncate(fd, size)` where new size > current size grows the file, fills the extension with zeros, and preserves existing data.
+
+**Cases**: `case_grow_from_empty`, `case_grow_with_prefix`, `case_grow_and_seek_hole`.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `case1: grown region not all zero` | Grow extension contains garbage. Classic NFS bug on some servers that don't zero-fill the extension. | Real conformance failure. Check server's SETATTR(size) grow path. |
+| `case2: prefix corrupted by grow` | Existing data changed after grow. | Serious — server or client wrote past EOF. |
+| `case2: grown tail not all zero` | Same class as case 1, but with non-empty prefix. | Same. |
+| `case3: SEEK_HOLE returned %lld` | After grow, SEEK_HOLE didn't find the new hole at the old EOF. | Server didn't mark the extension as a hole; allocated zero-fill. Not a conformance failure per se, but suspicious if the server advertises sparse-file support. |
+
+**False positives**: None on a POSIX fs.
+
+**Environmental gates**: None; uses POSIX `ftruncate`.
+
+---
+
+### <a id="op_unicode_names"></a>op_unicode_names
+
+**Tier**: SPEC (NFSv4 name encoding, RFC 7530 §1.4.2)
+
+**Asserts**: UTF-8 names round-trip correctly through create, readdir, stat, rename, unlink. Covers ASCII (1-byte), Latin-1 (2-byte), CJK (3-byte), emoji (4-byte), and rename-across-byte-widths.
+
+**Cases**: `case_ascii`, `case_latin1`, `case_cjk`, `case_emoji`, `case_rename_across_widths`.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `create(%s): %s` | Server refused a valid UTF-8 name. Commonly EILSEQ (server enforces a charset) or EINVAL. | Check server config — NFS servers often have a name charset policy (utf8mb3 vs utf8mb4 — emoji rejection). |
+| `readdir did not return %s` | Name created but not visible in readdir. Server normalized the name on store but not on lookup. | Unicode normalization bug: check for NFKC vs NFD mismatches. |
+| `rename(XB->YB) ...: %s` | Rename across UTF-8 byte widths failed. Some servers reject such renames as a heuristic against charset confusion. | Server name-encoding validation too strict. |
+| `%s not visible after rename` | Rename succeeded but the target name can't be looked up. | Normalization applied on write but not on lookup path. |
+
+**False positives**: Some NFSv3 servers only accept ASCII; they return EILSEQ for non-ASCII. Skip/FAIL depending on server config.
+
+**Environmental gates**: UTF-8 locale required; test does not set LC_ALL itself.
+
+---
+
+### <a id="op_verify"></a>op_verify
+
+**Tier**: SPEC (NFSv4 VERIFY / NVERIFY, RFC 7530 §18.28 / §18.19)
+
+**Asserts**: Attribute consistency across back-to-back stat calls. For Linux, also exercises `statx(STATX_CHANGE_COOKIE)` to detect NVERIFY optimization.
+
+**Cases**: `case_stat_consistency`, `case_size_after_write`, plus additional cases in source.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `st_ino changed between two stats` | Inode number changed — serious. Either client recycled the inode cache between stats or server changed the handle. | Inspect client attrcache; check for deferred OPEN/OPEN_CONFIRM churn. |
+| `st_mode / st_uid / st_gid / st_size changed` | Attribute flipped without corresponding operation. Two calls to stat with no intervening modification must agree. | Client attrcache inconsistency. |
+| `short write (%zd)` | Write didn't transfer full buffer. Environmental (ENOSPC, quota) or client buffer exhaustion. | Check server free space and export permissions. |
+
+**False positives**: None on a quiet mount. On a mount with concurrent activity, attribute flips are possible and expected; run this test on a quiescent mount.
+
+**Environmental gates**: Some cases are Linux-only (STATX_CHANGE_COOKIE).
+
+---
+
+### <a id="op_unlink"></a>op_unlink
+
+**Tier**: POSIX (REMOVE, silly-rename)
+
+**Asserts**: `unlink(2)` removes the name; open-then-unlink-then-read works (silly-rename contract on NFS); unlink vs open-count interaction.
+
+**Cases**: See `op_unlink.c` header.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| Open fd gets ESTALE after unlink | Silly-rename not implemented — server reaped the inode while client held an open. | Check `/proc/self/mountstats` for silly-rename counters; check client NFS version. |
+| `unlink of nonexistent succeeded` | Client cached a "deleted" entry and returned success instead of ENOENT. | Client directory cache coherence bug. |
+| `stat after unlink succeeded` | Same class — client returning stale positive lookup. | Check client dentry cache. |
+
+**False positives**: None on a clean mount.
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_read_write_large"></a>op_read_write_large
+
+**Tier**: POSIX (large / unaligned I/O stress)
+
+**Asserts**: `pread`/`pwrite` at offsets >4 GiB, in 1-4 MiB chunks, unaligned. Exercises the client's fragmentation path across large transfers.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| Data mismatch at offset >4 GiB | 32-bit truncation somewhere in the I/O path — client, server, or tcpdump tool. | Verify file size with `ls -l` (not `ls -sh`) and `stat`. Small first — try 2 GiB and bisect. |
+| Short write / short read on large transfer | Client didn't retry the tail of a partial transfer. | POSIX permits shortness but should be rare on a healthy mount. |
+| Data mismatch on unaligned I/O | Client's read-modify-write path corrupted an adjacent region. | Bisect to an aligned transfer; isolate the alignment. |
+
+**False positives**: None.
+
+**Environmental gates**: Requires enough free space for the large files (several GiB).
+
+---
+
 ### <a id="remaining-tests"></a>Remaining tests
 
 The following tests are thinner triage candidates — most either assert a single POSIX contract that's hard to get wrong, or mirror another triaged test. Refer to each test's `.c` file header for the full assertion matrix.
@@ -744,8 +906,6 @@ The following tests are thinner triage candidates — most either assert a singl
 - `op_at_variants` — `*at()` family with dirfds. Failures usually indicate dirfd handling bugs.
 - `op_change_attr` — statx(STATX_CHANGE_COOKIE). Reports server's NFSv4 change attr.
 - `op_chmod_chown` — SETATTR mode/uid/gid. idmap EINVAL handled as NOTE.
-- `op_clone` — FICLONE ioctl → NFSv4.2 CLONE. Requires reflink support.
-- `op_copy` — copy_file_range → NFSv4.2 COPY. FreeBSD 13+ / Linux 4.5+.
 - `op_deallocate` — FALLOC_FL_PUNCH_HOLE → DEALLOCATE. Linux only.
 - `op_directory` — O_DIRECTORY flag.
 - `op_fd_sharing` — dup/dup2/fork fd offset semantics.
@@ -759,7 +919,6 @@ The following tests are thinner triage candidates — most either assert a singl
 - `op_open_excl` — O_CREAT|O_EXCL exclusive create.
 - `op_owner_override` — Linux owner-override semantics (-P/-L modes).
 - `op_read_plus_sparse` — see dedicated section above.
-- `op_read_write_large` — large/unaligned I/O stress. Data mismatches point at fragmentation.
 - `op_readdir` — basic readdir round-trip.
 - `op_rename_atomic` — renameat2 RENAME_NOREPLACE/EXCHANGE flags.
 - `op_rename_self` — rename of hardlinks to same inode (POSIX.1-2024).
@@ -769,11 +928,7 @@ The following tests are thinner triage candidates — most either assert a singl
 - `op_statx_btime` — statx(STATX_BTIME) / st_birthtimespec.
 - `op_symlink` / `op_symlink_nofollow` — symlink + O_NOFOLLOW handling.
 - `op_tmpfile` — Linux O_TMPFILE unnamed-create. Skips if server doesn't support.
-- `op_truncate_grow` — ftruncate extending (hole creation).
-- `op_unicode_names` — UTF-8 name round-trip.
-- `op_unlink` — unlink, silly-rename (open+unlink+read).
 - `op_utimensat` — utimensat + UTIME_NOW / UTIME_OMIT / nsec.
-- `op_verify` — NFSv4 VERIFY/NVERIFY via stat consistency.
 - `op_xattr` — user.* xattr round-trip (Linux).
 
 If a failure in any of these tests is surprising and the test's `.c` header doesn't explain it, open an issue and we'll upgrade its triage entry.
@@ -812,6 +967,11 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `SKIP ... requires root` | op_root_squash | SKIP; run as root |
 | `renameat2 ... not supported` | op_rename_atomic | Client ≤6.0 doesn't passthrough renameat2 flags |
 | `utimensat backdate failed` | op_timestamps, op_statx_btime | utimensat returned an error; inspect errno |
+| `grown region not all zero` | op_truncate_grow | ftruncate-grow returned garbage in the extension |
+| `dst was affected by src mutation` | op_clone | CoW broken; clone shares storage with source |
+| `hole region in dst not zero-filled` | op_copy | COPY lost sparse layout |
+| `readdir did not return %s` | op_unicode_names | UTF-8 name stored but not findable — normalization mismatch |
+| `st_ino changed between two stats` | op_verify | Attribute cache inconsistency / inode recycled |
 
 ---
 
