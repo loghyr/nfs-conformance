@@ -949,6 +949,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `st_ino changed between two stats` | Inode number changed — serious. Either client recycled the inode cache between stats or server changed the handle. | Inspect client attrcache; check for deferred OPEN/OPEN_CONFIRM churn. |
 | `st_mode / st_uid / st_gid / st_size changed` | Attribute flipped without corresponding operation. Two calls to stat with no intervening modification must agree. | Client attrcache inconsistency. |
 | `short write (%zd)` | Write didn't transfer full buffer. Environmental (ENOSPC, quota) or client buffer exhaustion. | Check server free space and export permissions. |
+| `case4: fsync: %s` | fsync() failed after write in the mtime-after-write case (FreeBSD path). | Server-side write error; check server logs. |
 
 **False positives**: None on a quiet mount. On a mount with concurrent activity, attribute flips are possible and expected; run this test on a quiescent mount.
 
@@ -1474,9 +1475,14 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | Signature | Likely cause | Diagnose |
 |---|---|---|
 | `SKIP: server did not return time_create` | Server doesn't advertise the attribute. Expected on many servers. | Informational. |
+| `case1: lstat: %s` | lstat() failed on the test file (FreeBSD path). | Environmental; check permissions or path. |
 | `btime %lld is %lld s from wall %lld (> 60s window)` | Server clock skew or btime recording a different event. | Check NTP. |
 | `btime > mtime at creation` | btime set later than mtime — impossible unless server is inconsistent. | Real server bug. |
+| `btime > ctime at creation` | btime set later than ctime at file creation — same class as above. | Real server bug. |
+| `btime missing after utimensat` | btime became unavailable after a utimensat call — shouldn't happen. | Server dropped time_create after a SETATTR. |
 | `btime shifted under utimensat` | Backdating mtime via utimensat shifted btime too — btime must be immutable. | Real bug. The whole point of btime is immutability. |
+| `case5: reopen: %s` | open() failed when reopening the file for the close/reopen stability check (FreeBSD path). | Environmental. |
+| `case5: btime shifted across close/open` | btime changed between two opens of the same file with no intervening modification. | Server bug; btime must be stable. |
 
 **Environmental gates**: Linux 4.11+ (statx) or FreeBSD 10+ (st_birthtimespec). SKIP elsewhere.
 
