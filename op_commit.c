@@ -52,15 +52,31 @@
  *      close+reopen which forces a fresh server-side READ).  Skipped
  *      on platforms without fallocate(2) / posix_fallocate(3).
  *
+ *   8. Directory mutations around a file's fsync.  Create a, b, c in
+ *      a scratch subdirectory.  fsync(a), then rename b -> b_new,
+ *      create hardlink a -> a_link, unlink c, fsync(a) again, close
+ *      everything.  Fresh opendir + readdir on the scratch
+ *      subdirectory must show exactly {a, b_new, a_link} -- the
+ *      rename target is present, the unlink is reflected, the new
+ *      hardlink is visible.  Adapts xfstests generic/321: xfstests
+ *      asserts these parent-dir mutations survive a crash + log
+ *      replay; NFS has no local log, so the NFS-reachable invariant
+ *      is "after fsync + fresh opendir, the server's directory
+ *      state matches what we did" -- a client that caches stale
+ *      dirent state across the unlink/rename/hardlink sequence
+ *      fails here.
+ *
  * Portable: POSIX.1-1990 S6.6.1 (fsync) / POSIX.1-2008 fdatasync()
  * across Linux / FreeBSD / macOS / Solaris.  Case 7 uses
- * posix_fallocate(3) where available.
+ * posix_fallocate(3) where available.  Case 8 uses opendir/readdir
+ * (POSIX.1-2008 S2.2).
  */
 
 #define _POSIX_C_SOURCE 200809L
 
 #include "tests.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
@@ -443,6 +459,153 @@ static void case_fsync_after_fallocate(void)
 #endif
 }
 
+/* case 8 ---------------------------------------------------------------- */
+
+/*
+ * See if a directory entry with the given name is present.  Returns
+ * 1 if found, 0 if not, -1 on opendir/readdir failure (with errno).
+ */
+static int dirent_present(const char *dirpath, const char *name)
+{
+	DIR *dp = opendir(dirpath);
+	if (!dp)
+		return -1;
+	struct dirent *de;
+	int found = 0;
+	while ((de = readdir(dp)) != NULL) {
+		if (strcmp(de->d_name, name) == 0) {
+			found = 1;
+			break;
+		}
+	}
+	closedir(dp);
+	return found;
+}
+
+static void case_parent_dir_mutations_survive_fsync(void)
+{
+	char dir[64];
+	snprintf(dir, sizeof(dir), "t_cm.dir.%ld", (long)getpid());
+	/* Clean up leftovers from a prior failed run. */
+	{
+		char p[128];
+		snprintf(p, sizeof(p), "%s/a", dir);      unlink(p);
+		snprintf(p, sizeof(p), "%s/b", dir);      unlink(p);
+		snprintf(p, sizeof(p), "%s/b_new", dir);  unlink(p);
+		snprintf(p, sizeof(p), "%s/c", dir);      unlink(p);
+		snprintf(p, sizeof(p), "%s/a_link", dir); unlink(p);
+		rmdir(dir);
+	}
+
+	if (mkdir(dir, 0755) != 0) {
+		complain("case8: mkdir: %s", strerror(errno));
+		return;
+	}
+
+	char pa[128], pb[128], pb_new[128], pc[128], palink[128];
+	snprintf(pa, sizeof(pa), "%s/a", dir);
+	snprintf(pb, sizeof(pb), "%s/b", dir);
+	snprintf(pb_new, sizeof(pb_new), "%s/b_new", dir);
+	snprintf(pc, sizeof(pc), "%s/c", dir);
+	snprintf(palink, sizeof(palink), "%s/a_link", dir);
+
+	/* Create a, b, c.  a is the file we'll fsync. */
+	int fda = open(pa, O_RDWR | O_CREAT, 0644);
+	if (fda < 0) {
+		complain("case8: open a: %s", strerror(errno));
+		goto cleanup;
+	}
+	int fdb = open(pb, O_RDWR | O_CREAT, 0644);
+	int fdc = open(pc, O_RDWR | O_CREAT, 0644);
+	if (fdb < 0 || fdc < 0) {
+		complain("case8: open b/c: %s", strerror(errno));
+		if (fdb >= 0) close(fdb);
+		if (fdc >= 0) close(fdc);
+		close(fda);
+		goto cleanup;
+	}
+	close(fdb);
+	close(fdc);
+
+	unsigned char buf[64];
+	fill_pattern(buf, sizeof(buf), 8);
+	if (pwrite_all(fda, buf, sizeof(buf), 0, "case8: pwrite a") != 0) {
+		close(fda); goto cleanup;
+	}
+	if (fsync(fda) != 0) {
+		complain("case8: fsync a (pre): %s", strerror(errno));
+		close(fda); goto cleanup;
+	}
+
+	/*
+	 * Mutate siblings in the parent dir: rename b -> b_new, hardlink
+	 * a -> a_link, unlink c.  None of these touch a's data, but all
+	 * of them mutate the parent directory.
+	 */
+	if (rename(pb, pb_new) != 0) {
+		complain("case8: rename b -> b_new: %s", strerror(errno));
+		close(fda); goto cleanup;
+	}
+	if (link(pa, palink) != 0) {
+		complain("case8: link a -> a_link: %s", strerror(errno));
+		close(fda); goto cleanup;
+	}
+	if (unlink(pc) != 0) {
+		complain("case8: unlink c: %s", strerror(errno));
+		close(fda); goto cleanup;
+	}
+
+	/*
+	 * Second fsync on a.  Over NFS this forces a COMMIT; over a
+	 * local log-replay fs it anchors the parent-dir mutations in
+	 * the log.  Either way, a fresh opendir/readdir after close
+	 * must show the post-mutation state.
+	 */
+	if (fsync(fda) != 0) {
+		complain("case8: fsync a (post): %s", strerror(errno));
+		close(fda); goto cleanup;
+	}
+	close(fda);
+
+	/* Fresh directory read: opendir forces a server-side READDIR. */
+	int has_a     = dirent_present(dir, "a");
+	int has_b     = dirent_present(dir, "b");
+	int has_b_new = dirent_present(dir, "b_new");
+	int has_c     = dirent_present(dir, "c");
+	int has_alink = dirent_present(dir, "a_link");
+
+	if (has_a != 1)
+		complain("case8: a missing from fresh opendir (fsync did "
+			 "not persist the file, or readdir cache stale)");
+	if (has_b != 0)
+		complain("case8: b still visible after rename to b_new "
+			 "(stale readdir cache or server-side dirent not "
+			 "persisted)");
+	if (has_b_new != 1)
+		complain("case8: b_new missing from fresh opendir "
+			 "(rename target not persisted / not yet visible)");
+	if (has_c != 0)
+		complain("case8: c still visible after unlink "
+			 "(stale readdir cache or unlink not persisted)");
+	if (has_alink != 1)
+		complain("case8: a_link missing from fresh opendir "
+			 "(hardlink not persisted)");
+
+	/* nlink on a must reflect the new hardlink. */
+	struct stat st;
+	if (stat(pa, &st) == 0 && st.st_nlink != 2)
+		complain("case8: a.nlink=%ld after link a -> a_link "
+			 "(expected 2)", (long)st.st_nlink);
+
+cleanup:
+	unlink(pa);
+	unlink(pb);
+	unlink(pb_new);
+	unlink(pc);
+	unlink(palink);
+	rmdir(dir);
+}
+
 /* case 5 ---------------------------------------------------------------- */
 
 static void case_fsync_empty(void)
@@ -505,6 +668,8 @@ next:
 		 case_fsync_after_unlink_hardlink());
 	RUN_CASE("case_fsync_after_fallocate",
 		 case_fsync_after_fallocate());
+	RUN_CASE("case_parent_dir_mutations_survive_fsync",
+		 case_parent_dir_mutations_survive_fsync());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
