@@ -90,7 +90,8 @@ static int make_scratch_dir(char *out, size_t outsz, int casenum)
 		while ((e = readdir(d)) != NULL) {
 			if (strcmp(e->d_name, ".") == 0 ||
 			    strcmp(e->d_name, "..") == 0) continue;
-			char p[256];
+			/* dir + '/' + NAME_MAX + '\0' easily fits in 512. */
+			char p[512];
 			snprintf(p, sizeof(p), "%s/%s", out, e->d_name);
 			unlink(p);
 		}
@@ -104,7 +105,7 @@ static int make_scratch_dir(char *out, size_t outsz, int casenum)
 static int populate(const char *dir, int n)
 {
 	for (int i = 0; i < n; i++) {
-		char p[256];
+		char p[512];
 		snprintf(p, sizeof(p), "%s/f%03d", dir, i);
 		int fd = open(p, O_RDWR | O_CREAT | O_TRUNC, 0644);
 		if (fd < 0) return -1;
@@ -121,7 +122,7 @@ static void cleanup_dir(const char *dir)
 		while ((e = readdir(d)) != NULL) {
 			if (strcmp(e->d_name, ".") == 0 ||
 			    strcmp(e->d_name, "..") == 0) continue;
-			char p[256];
+			char p[512];
 			snprintf(p, sizeof(p), "%s/%s", dir, e->d_name);
 			unlink(p);
 		}
@@ -164,7 +165,7 @@ static void case_read_delete_continue(void)
 	int deleted = 0;
 	for (int i = 0; i < NFILES && deleted < 3; i++) {
 		if (!seen[i]) {
-			char p[256];
+			char p[512];
 			snprintf(p, sizeof(p), "%s/f%03d", dir, i);
 			if (unlink(p) == 0) deleted++;
 		}
@@ -184,7 +185,7 @@ static void case_read_delete_continue(void)
 	/* Cross-check: everything that still exists on disk was seen. */
 	int missed = 0;
 	for (int i = 0; i < NFILES; i++) {
-		char p[256];
+		char p[512];
 		snprintf(p, sizeof(p), "%s/f%03d", dir, i);
 		if (access(p, F_OK) == 0 && !seen[i])
 			missed++;
@@ -217,7 +218,7 @@ static void case_rewinddir_after_mutation(void)
 	while (readdir(d) != NULL) { /* drain */ }
 
 	/* Mutate: delete two, add three. */
-	char p[256];
+	char p[512];
 	snprintf(p, sizeof(p), "%s/f000", dir); unlink(p);
 	snprintf(p, sizeof(p), "%s/f001", dir); unlink(p);
 	for (int i = 100; i < 103; i++) {
@@ -275,12 +276,13 @@ static void case_telldir_seekdir_survival(void)
 
 	/* Read 8 entries, then telldir at that position. */
 	int consumed = 0;
-	char seen_name[16][32] = { { 0 } };
+	char seen_name[16][256] = { { 0 } };
 	struct dirent *e;
 	while (consumed < 8 && (e = readdir(d)) != NULL) {
 		if (strcmp(e->d_name, ".") == 0 ||
 		    strcmp(e->d_name, "..") == 0) continue;
-		snprintf(seen_name[consumed], 32, "%s", e->d_name);
+		snprintf(seen_name[consumed], sizeof(seen_name[consumed]),
+			 "%s", e->d_name);
 		consumed++;
 	}
 	long pos = telldir(d);
@@ -296,7 +298,7 @@ static void case_telldir_seekdir_survival(void)
 
 	/* Delete entries we already consumed. */
 	for (int i = 0; i < 4; i++) {
-		char p[256];
+		char p[512];
 		snprintf(p, sizeof(p), "%s/%s", dir, seen_name[i]);
 		unlink(p);
 	}
@@ -347,7 +349,7 @@ static void case_empty_after_delete(void)
 	while ((e = readdir(d)) != NULL) {
 		if (strcmp(e->d_name, ".") == 0 ||
 		    strcmp(e->d_name, "..") == 0) continue;
-		char p[256];
+		char p[512];
 		snprintf(p, sizeof(p), "%s/%s", dir, e->d_name);
 		unlink(p);
 	}
@@ -393,8 +395,8 @@ static void case_two_streams(void)
 
 	/* Advance d1 by 3, advance d2 by 6.  Neither should interfere
 	 * with the other's position. */
-	for (int i = 0; i < 3; i++) readdir(d1);
-	for (int i = 0; i < 6; i++) readdir(d2);
+	for (int i = 0; i < 3; i++) (void)readdir(d1);
+	for (int i = 0; i < 6; i++) (void)readdir(d2);
 
 	int n1 = 0, n2 = 0;
 	while (readdir(d1)) n1++;
