@@ -183,7 +183,7 @@ static void case_parent_timestamps(void)
 	if (fd < 0) { complain("case5: create: %s", strerror(errno)); return; }
 	close(fd);
 
-	usleep(50000);
+	sleep_ms(50);
 
 	struct stat st_before;
 	if (stat(".", &st_before) != 0) {
@@ -192,7 +192,7 @@ static void case_parent_timestamps(void)
 		return;
 	}
 
-	usleep(50000);
+	sleep_ms(50);
 
 	if (unlink(a) != 0) {
 		complain("case5: unlink: %s", strerror(errno));
@@ -245,7 +245,7 @@ static void case_hardlink_unlink(void)
 		complain("case6: nlink before unlink: %lu (expected 2)",
 			 (unsigned long)st_before.st_nlink);
 
-	usleep(50000);
+	sleep_ms(50);
 
 	if (unlink(a) != 0) {
 		complain("case6: unlink(a): %s", strerror(errno));

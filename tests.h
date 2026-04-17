@@ -120,6 +120,13 @@ int pwrite_all(int fd, const void *buf, size_t len, off_t off,
 int scratch_open(const char *prefix, char *out_name, size_t out_name_sz);
 
 /*
+ * sleep_ms -- nanosleep-based millisecond sleep.  Used in preference
+ * to usleep(3), which POSIX.1-2008 obsoleted and which strict
+ * _XOPEN_SOURCE=700 hides on FreeBSD.
+ */
+void sleep_ms(unsigned ms);
+
+/*
  * fill_pattern -- fill buf[0..n) with a deterministic pattern
  * derived from seed, so tests can verify reads by re-running the
  * pattern.

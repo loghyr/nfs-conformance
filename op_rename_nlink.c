@@ -260,12 +260,12 @@ static void case_parent_timestamps(void)
 	}
 	close(fd);
 
-	usleep(50000);
+	sleep_ms(50);
 	struct stat st_src_before, st_dst_before;
 	stat(src, &st_src_before);
 	stat(dst, &st_dst_before);
 
-	usleep(50000);
+	sleep_ms(50);
 	if (rename(sf, df) != 0) {
 		complain("case4: rename: %s", strerror(errno));
 		unlink(sf); unlink(df); rmdir(src); rmdir(dst);

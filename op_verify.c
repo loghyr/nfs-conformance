@@ -227,7 +227,7 @@ static void case_mtime_after_write(void)
 	}
 
 	/* Small delay to ensure mtime can advance. */
-	usleep(50000);
+	sleep_ms(50);
 
 	char buf[64];
 	memset(buf, 'M', sizeof(buf));

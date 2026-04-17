@@ -30,6 +30,12 @@
  * Linux / FreeBSD 13+ only; stub out on other platforms.
  */
 
+/* FreeBSD has copy_file_range in libc since 13.0, but its declaration
+ * is under __BSD_VISIBLE which is disabled when _POSIX_C_SOURCE /
+ * _XOPEN_SOURCE are set.  Re-enable BSD visibility for this file. */
+#ifdef __FreeBSD__
+# define __BSD_VISIBLE 1
+#endif
 #define _GNU_SOURCE
 
 #include "tests.h"
