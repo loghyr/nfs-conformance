@@ -27,6 +27,22 @@ In TAP mode (`NFS_CONFORMANCE_TAP=1` — what `make check` sets), each case emit
 
 `NOTE:` lines are informational — they describe environmental conditions the test detected (noac not set, idmap not configured, clock skew, etc.). Not failures.
 
+### Automated lookup: `scripts/triage.sh`
+
+Rather than scrolling the tables by hand, pipe the test output through the triage tool:
+
+```
+./op_timestamps -d /mnt 2>&1 | scripts/triage.sh --stdin
+```
+
+It parses every `FAIL: ...` line, matches it against that test's failure-patterns table AND the by-symptom cross-reference table, and prints the diagnose step for each match. Three modes:
+
+- `scripts/triage.sh op_NAME` — print the full section for one test
+- `scripts/triage.sh op_NAME 'SIGNATURE'` — print only rows whose Signature column contains SIGNATURE (case-insensitive; `%s` / `%d` / `%zu` in the table are matched as wildcards)
+- `scripts/triage.sh --stdin` — parse test output from stdin
+
+Run the binary directly, not via `prove`, so per-case FAIL lines aren't swallowed.
+
 ## Charter-tier legend
 
 Each test is tagged with the charter tier it primarily exercises (see the charter in `README.md`):
