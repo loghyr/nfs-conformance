@@ -576,7 +576,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: O_APPEND writes are atomic seek-to-end + write. Concurrent appenders from two processes cannot lose each other's data.
 
-**Cases**: See `op_append.c` header (7 cases; case 5 is a POSIX pwrite+O_APPEND assertion the Linux NFS client is known to violate — it now FAILs there).
+**Cases**: See `op_append.c` header (7 cases; case 5 is platform-conditional: NOTE on Linux where the kernel violates POSIX for pwrite+O_APPEND; FAIL on macOS/FreeBSD/Solaris where POSIX is honored).
 
 **Failure patterns**
 
@@ -584,12 +584,13 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 |---|---|---|
 | `case 4 concurrent fork: lost N records` | O_APPEND atomicity broken in concurrent path. Server or client didn't serialize appends at EOF. | Real bug. Reproduce with more workers. |
 | `case 6 O_TRUNC didn't reset size` | Open with O_TRUNC followed by O_APPEND write didn't start at 0. | Client or server open-path bug. |
-| `case5: pwrite+O_APPEND size ... (pwrite must ignore O_APPEND per POSIX.1-1990 S6.4.2; Linux NFS client violates this)` | Known Linux NFS client bug: pwrite(fd, ...) on an O_APPEND fd appends instead of writing at the given offset. POSIX.1-1990 S6.4.2 forbids this. | Real conformance bug; the server is correct. Workaround is to open a fresh non-O_APPEND fd for pwrite use. |
-| `case5: pwrite data not at offset 0` | Content-side symptom of the same bug. | Same as above. |
+| `case5: pwrite+O_APPEND size ... (pwrite must ignore O_APPEND per POSIX.1-1990 S6.4.2)` | Platform honors POSIX pwrite+O_APPEND but server/client broke the contract. FAIL only on non-Linux hosts. | Real conformance bug on the path under test. |
+| `case5: pwrite data not at offset 0 (POSIX violation)` | Content-side symptom of the same bug. | Same as above. |
+| `NOTE: case5 pwrite+O_APPEND ... Linux kernel violates POSIX.1-1990 S6.4.2 ... documented BUG in Linux pwrite(2)` | Expected on Linux hosts -- the kernel itself (not just NFS) applies O_APPEND to pwrite. Documented in the Linux pwrite(2) BUGS section. | Not a failure. Upstream kernel behaviour. |
 
-**False positives**: None. (Case 5 was previously a NOTE but is now a FAIL per charter: POSIX conformance first.)
+**False positives**: On Linux, case 5 always emits NOTE, never FAIL -- the Linux kernel documents this deviation from POSIX.
 
-**Environmental gates**: None.
+**Environmental gates**: None; platform-gated severity handles the Linux kernel quirk.
 
 ---
 
@@ -1702,7 +1703,7 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `shared locks must stack` | op_flock | Two LOCK_SH couldn't coexist on flock |
 | `dup did not release the shared open-file description's lock` | op_flock | LOCK_UN via dup'd fd didn't clear the flock (OFD-style behavior mis-applied) |
 | `close did not release the flock` | op_flock | Close didn't trigger UNLOCK on an flock-held fd |
-| `pwrite must ignore O_APPEND per POSIX.1-1990 S6.4.2` | op_append | Linux NFS client incorrectly applies O_APPEND to pwrite (POSIX violation) |
+| `pwrite must ignore O_APPEND per POSIX.1-1990 S6.4.2` | op_append | Platform-conditional: Linux kernel documents this as a BUG, NOTE-only there; FAIL on macOS/FreeBSD/Solaris |
 | `parent nlink ... after regular-file` | op_unlink / op_rename_nlink | NOTE: backing FS counts every dirent in directory st_nlink (APFS-style) |
 | `getxattr size query returned` | op_xattr | NULL-buffer size query returned wrong length |
 | `listxattr into exact-size buffer` | op_xattr | Size query undercounted the list length |
