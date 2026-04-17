@@ -54,8 +54,14 @@
  * macOS / Solaris.
  */
 
-#define _GNU_SOURCE
-#define _DARWIN_C_SOURCE
+/*
+ * _XOPEN_SOURCE=700 and _DEFAULT_SOURCE come from the Makefile (see
+ * R-CODE-2).  Darwin needs _DARWIN_C_SOURCE for utimensat + the
+ * st_*timespec field names; no harmless elsewhere.
+ */
+#if defined(__APPLE__)
+# define _DARWIN_C_SOURCE
+#endif
 
 #include "tests.h"
 
@@ -122,14 +128,26 @@ static void case_nsec_roundtrip(void)
 		return;
 	}
 
-	if (st.ST_ATIM.tv_sec != 1000000000 ||
-	    st.ST_ATIM.tv_nsec != 123456789)
+	/*
+	 * POSIX requires tv_sec round-trip.  nsec round-trip is
+	 * server-dependent -- many legitimate NFS servers coarsen
+	 * timestamps to second granularity.  Treat nsec mismatch as
+	 * a NOTE when tv_sec matches (c.f. op_timestamps case 8).
+	 */
+	if (st.ST_ATIM.tv_sec != 1000000000)
 		complain("case1: atime %ld.%09ld, expected 1000000000.123456789",
 			 (long)st.ST_ATIM.tv_sec, st.ST_ATIM.tv_nsec);
-	if (st.ST_MTIM.tv_sec != 2000000000 ||
-	    st.ST_MTIM.tv_nsec != 987654321)
+	else if (st.ST_ATIM.tv_nsec != 123456789 && !Sflag)
+		printf("NOTE: %s: case1 atime nsec %ld (expected 123456789) "
+		       "-- server has sub-second timestamp truncation\n",
+		       myname, st.ST_ATIM.tv_nsec);
+	if (st.ST_MTIM.tv_sec != 2000000000)
 		complain("case1: mtime %ld.%09ld, expected 2000000000.987654321",
 			 (long)st.ST_MTIM.tv_sec, st.ST_MTIM.tv_nsec);
+	else if (st.ST_MTIM.tv_nsec != 987654321 && !Sflag)
+		printf("NOTE: %s: case1 mtime nsec %ld (expected 987654321) "
+		       "-- server has sub-second timestamp truncation\n",
+		       myname, st.ST_MTIM.tv_nsec);
 	unlink(a);
 }
 
@@ -160,12 +178,20 @@ static void case_dir_timestamps(void)
 		return;
 	}
 
-	if (st.ST_ATIM.tv_sec != 111 || st.ST_ATIM.tv_nsec != 1)
+	if (st.ST_ATIM.tv_sec != 111)
 		complain("case2: dir atime %ld.%09ld, expected 111.000000001",
 			 (long)st.ST_ATIM.tv_sec, st.ST_ATIM.tv_nsec);
-	if (st.ST_MTIM.tv_sec != 222 || st.ST_MTIM.tv_nsec != 2)
+	else if (st.ST_ATIM.tv_nsec != 1 && !Sflag)
+		printf("NOTE: %s: case2 dir atime nsec %ld (expected 1) "
+		       "-- server has sub-second timestamp truncation\n",
+		       myname, st.ST_ATIM.tv_nsec);
+	if (st.ST_MTIM.tv_sec != 222)
 		complain("case2: dir mtime %ld.%09ld, expected 222.000000002",
 			 (long)st.ST_MTIM.tv_sec, st.ST_MTIM.tv_nsec);
+	else if (st.ST_MTIM.tv_nsec != 2 && !Sflag)
+		printf("NOTE: %s: case2 dir mtime nsec %ld (expected 2) "
+		       "-- server has sub-second timestamp truncation\n",
+		       myname, st.ST_MTIM.tv_nsec);
 	rmdir(d);
 }
 
@@ -296,13 +322,29 @@ static void case_utime_omit(void)
 		return;
 	}
 
-	if (st.ST_ATIM.tv_sec != 999 || st.ST_ATIM.tv_nsec != 333)
+	if (st.ST_ATIM.tv_sec != 999)
 		complain("case6: atime %ld.%09ld, expected 999.000000333",
 			 (long)st.ST_ATIM.tv_sec, st.ST_ATIM.tv_nsec);
-	if (st.ST_MTIM.tv_sec != 600 || st.ST_MTIM.tv_nsec != 222)
+	else if (st.ST_ATIM.tv_nsec != 333 && !Sflag)
+		printf("NOTE: %s: case6 atime nsec %ld (expected 333) "
+		       "-- server has sub-second timestamp truncation\n",
+		       myname, st.ST_ATIM.tv_nsec);
+	/*
+	 * UTIME_OMIT mtime must not change: compare against the
+	 * baseline second.  Nsec granularity can differ; if tv_sec
+	 * matches but tv_nsec drifted, NOTE -- the OMIT was honored
+	 * at second precision, and the nsec drift is server-side
+	 * coarsening, not a real semantic violation.
+	 */
+	if (st.ST_MTIM.tv_sec != 600)
 		complain("case6: mtime changed to %ld.%09ld despite "
 			 "UTIME_OMIT (expected 600.000000222)",
 			 (long)st.ST_MTIM.tv_sec, st.ST_MTIM.tv_nsec);
+	else if (st.ST_MTIM.tv_nsec != 222 && !Sflag)
+		printf("NOTE: %s: case6 mtime nsec %ld (expected 222) "
+		       "-- server truncated baseline nsec (OMIT still "
+		       "honored at second precision)\n",
+		       myname, st.ST_MTIM.tv_nsec);
 	unlink(a);
 }
 
