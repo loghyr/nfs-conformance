@@ -35,8 +35,26 @@
  *      does not require preceding WRITEs.
  *      (POSIX.1-1990 fsync(), S6.6.1)
  *
+ *   6. fsync after unlink of a hardlink.  Create A, link A -> A_link,
+ *      fsync A, unlink A_link, fsync A, close.  Reopen A on a fresh
+ *      fd (so the client must LOOKUP+GETATTR against the server) and
+ *      verify: A still exists, nlink == 1, A_link absent.  This is
+ *      the NFS-reachable equivalent of xfstests generic/039: the
+ *      post-fsync invariant "the name-space reflects what fsync
+ *      persisted" must hold even after a sibling link was removed.
+ *      (POSIX.1-1990 fsync() S6.6.1 + POSIX.1-2008 link()/unlink()
+ *      parent-directory update guarantees)
+ *
+ *   7. fallocate extend + fsync + close + reopen: reads from the
+ *      newly-allocated-but-never-written range must return zeros.
+ *      Adapts xfstests generic/042's "no stale content exposed after
+ *      fallocate + crash" invariant to NFS (crash replaced by
+ *      close+reopen which forces a fresh server-side READ).  Skipped
+ *      on platforms without fallocate(2) / posix_fallocate(3).
+ *
  * Portable: POSIX.1-1990 S6.6.1 (fsync) / POSIX.1-2008 fdatasync()
- * across Linux / FreeBSD / macOS / Solaris.
+ * across Linux / FreeBSD / macOS / Solaris.  Case 7 uses
+ * posix_fallocate(3) where available.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -269,6 +287,162 @@ static void case_fsync_ronly_fd(void)
 	unlink(f);
 }
 
+/* case 6 ---------------------------------------------------------------- */
+
+static void case_fsync_after_unlink_hardlink(void)
+{
+	char a[64], b[64];
+	snprintf(a, sizeof(a), "t_cm.hl.%ld", (long)getpid());
+	snprintf(b, sizeof(b), "t_cm.hl.%ld.lnk", (long)getpid());
+	unlink(a);
+	unlink(b);
+
+	int fd = open(a, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case6: open a: %s", strerror(errno));
+		return;
+	}
+
+	unsigned char buf[256];
+	fill_pattern(buf, sizeof(buf), 6);
+	if (pwrite_all(fd, buf, sizeof(buf), 0, "case6: pwrite a") != 0) {
+		close(fd); unlink(a); return;
+	}
+	if (fsync(fd) != 0) {
+		complain("case6: fsync a: %s", strerror(errno));
+		close(fd); unlink(a); return;
+	}
+
+	if (link(a, b) != 0) {
+		complain("case6: link a -> b: %s", strerror(errno));
+		close(fd); unlink(a); return;
+	}
+	/*
+	 * Now unlink the hardlink.  After this returns, a still exists
+	 * (nlink drops 2 -> 1) and b is gone.  fsync(a) must persist
+	 * both the unlink of b and the updated nlink of a.
+	 */
+	if (unlink(b) != 0) {
+		complain("case6: unlink b: %s", strerror(errno));
+		close(fd); unlink(a); return;
+	}
+	if (fsync(fd) != 0) {
+		complain("case6: fsync after unlink: %s", strerror(errno));
+		close(fd); unlink(a); return;
+	}
+	close(fd);
+
+	/*
+	 * Fresh fd forces LOOKUP + GETATTR on the server.  If the client
+	 * cached stale dirent state or the server's fsync didn't cover
+	 * the parent dir, we'd see either nlink=2, a missing, or b still
+	 * there.  All three are bugs.
+	 */
+	int fd2 = open(a, O_RDONLY);
+	if (fd2 < 0) {
+		complain("case6: reopen a: %s (fsync did not persist "
+			 "the unlink of the sibling link)", strerror(errno));
+		unlink(a); return;
+	}
+	struct stat st;
+	if (fstat(fd2, &st) != 0) {
+		complain("case6: fstat a: %s", strerror(errno));
+	} else if (st.st_nlink != 1) {
+		complain("case6: a.nlink=%ld after unlink of b (expected 1)",
+			 (long)st.st_nlink);
+	}
+	close(fd2);
+
+	/* b must be gone. */
+	if (access(b, F_OK) == 0) {
+		complain("case6: b still present after fsync + reopen "
+			 "(unlink not persisted)");
+		unlink(b);
+	} else if (errno != ENOENT) {
+		complain("case6: access(b) unexpected errno: %s",
+			 strerror(errno));
+	}
+
+	unlink(a);
+}
+
+/* case 7 ---------------------------------------------------------------- */
+
+/*
+ * posix_fallocate is POSIX.1-2008 but not every libc implements it.
+ * Linux glibc and FreeBSD 9+ have it; macOS does not (it offers the
+ * non-portable fcntl(F_PREALLOCATE) instead).
+ */
+#if defined(__linux__) || defined(__FreeBSD__)
+# define HAVE_POSIX_FALLOCATE 1
+#else
+# define HAVE_POSIX_FALLOCATE 0
+#endif
+
+static void case_fsync_after_fallocate(void)
+{
+#if HAVE_POSIX_FALLOCATE
+	char f[64];
+	snprintf(f, sizeof(f), "t_cm.fa.%ld", (long)getpid());
+	unlink(f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case7: open: %s", strerror(errno));
+		return;
+	}
+
+	const off_t sz = 64 * 1024;
+	int r = posix_fallocate(fd, 0, sz);
+	if (r != 0) {
+		/*
+		 * EINVAL / ENOSYS / EOPNOTSUPP from posix_fallocate are
+		 * environmental (some filesystems / NFS setups refuse
+		 * ALLOCATE).  Skip-as-NOTE rather than FAIL.
+		 */
+		if (r == EINVAL || r == ENOSYS || r == EOPNOTSUPP) {
+			if (!Sflag)
+				printf("NOTE: %s: case7 posix_fallocate %s - "
+				       "skipping\n", myname, strerror(r));
+			close(fd); unlink(f); return;
+		}
+		complain("case7: posix_fallocate: %s", strerror(r));
+		close(fd); unlink(f); return;
+	}
+	if (fsync(fd) != 0) {
+		complain("case7: fsync: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+	close(fd);
+
+	fd = open(f, O_RDONLY);
+	if (fd < 0) {
+		complain("case7: reopen: %s", strerror(errno));
+		unlink(f); return;
+	}
+
+	unsigned char *rbuf = malloc((size_t)sz);
+	if (!rbuf) {
+		complain("case7: malloc");
+		close(fd); unlink(f); return;
+	}
+	if (pread_all(fd, rbuf, (size_t)sz, 0,
+		      "case7: pread allocated range") == 0) {
+		if (!all_zero(rbuf, (size_t)sz))
+			complain("case7: stale content in "
+				 "fallocate-but-never-written range "
+				 "(server exposed uninitialised disk bytes)");
+	}
+	free(rbuf);
+	close(fd);
+	unlink(f);
+#else
+	if (!Sflag)
+		printf("NOTE: %s: case7 posix_fallocate unavailable - "
+		       "skipping\n", myname);
+#endif
+}
+
 /* case 5 ---------------------------------------------------------------- */
 
 static void case_fsync_empty(void)
@@ -327,6 +501,10 @@ next:
 	RUN_CASE("case_log_style", case_log_style());
 	RUN_CASE("case_fsync_ronly_fd", case_fsync_ronly_fd());
 	RUN_CASE("case_fsync_empty", case_fsync_empty());
+	RUN_CASE("case_fsync_after_unlink_hardlink",
+		 case_fsync_after_unlink_hardlink());
+	RUN_CASE("case_fsync_after_fallocate",
+		 case_fsync_after_fallocate());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
