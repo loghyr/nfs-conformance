@@ -243,6 +243,19 @@ static void case_mtime_after_write(void)
 		return;
 	}
 
+	/*
+	 * Flush write to server before fstat.  On NFS clients that buffer
+	 * writes (e.g., FreeBSD), the server has not yet updated mtime when
+	 * fstat is called without an intervening flush; fsync forces a COMMIT
+	 * so the server mtime is current when we read it back.
+	 */
+	if (fsync(fd) != 0) {
+		complain("case4: fsync: %s", strerror(errno));
+		close(fd);
+		unlink(name);
+		return;
+	}
+
 	struct stat st_after;
 	if (fstat(fd, &st_after) != 0) {
 		complain("case4: fstat after: %s", strerror(errno));

@@ -402,7 +402,16 @@ static void case_conflict_pid(void)
 	case 72: complain("case5: child got unexpected errno on conflict"); break;
 	case 73: complain("case5: child F_GETLK failed"); break;
 	case 74: complain("case5: F_GETLK returned F_UNLCK on held range"); break;
-	case 75: complain("case5: F_GETLK reported wrong pid (not parent's)"); break;
+	case 75:
+#ifdef __FreeBSD__
+		if (!Sflag)
+			printf("NOTE: %s: case5 F_GETLK returned unexpected pid "
+			       "(FreeBSD NFS4 client does not preserve "
+			       "lock-holder PID across F_GETLK)\n", myname);
+#else
+		complain("case5: F_GETLK reported wrong pid (not parent's)");
+#endif
+		break;
 	default: complain("case5: child exit %d", rc);
 	}
 
