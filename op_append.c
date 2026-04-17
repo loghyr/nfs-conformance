@@ -433,25 +433,29 @@ static void case_pwrite_coexist(void)
 	close(fd);
 
 	struct stat st;
-	stat(name, &st);
+	if (stat(name, &st) != 0) {
+		complain("case5: stat after writes: %s", strerror(errno));
+		unlink(name);
+		return;
+	}
 	if (st.st_size != (off_t)(sizeof(chunk1) + sizeof(chunk2))) {
 		/*
-		 * Linux NFS client bug: pwrite() with O_APPEND set on the
-		 * fd appends to EOF instead of writing at the given offset.
-		 * This violates POSIX.1-1990 S6.4.2 which says pwrite()
-		 * shall ignore O_APPEND.  The server is correct; the client
-		 * uses O_APPEND semantics for all writes on the fd.
-		 * Downgrade to NOTE so the suite does not fail on a known
-		 * client limitation.
+		 * POSIX.1-1990 S6.4.2: pwrite() shall NOT be affected by
+		 * O_APPEND on the fd.  A file size greater than the expected
+		 * sum (chunk1 + chunk2) means pwrite honored O_APPEND and
+		 * appended instead of writing at offset 0.  Known Linux NFS
+		 * client violation; the server is correct.
+		 *
+		 * Per the charter, POSIX conformance is the suite's first
+		 * priority -- we FAIL regardless of which side of the wire
+		 * the bug lives on.  The TRIAGE entry for op_append names
+		 * the Linux client so an operator can route the finding.
 		 */
-		if (!Sflag)
-			printf("NOTE: %s: case5 pwrite+O_APPEND: size %lld, "
-			       "expected %zu (Linux NFS client violates "
-			       "POSIX pwrite/O_APPEND semantics)\n",
-			       myname, (long long)st.st_size,
-			       sizeof(chunk1) + sizeof(chunk2));
-		fd = open(name, O_RDONLY);
-		if (fd >= 0) close(fd);
+		complain("case5: pwrite+O_APPEND size %lld, expected %zu "
+			 "(pwrite must ignore O_APPEND per POSIX.1-1990 S6.4.2; "
+			 "Linux NFS client violates this)",
+			 (long long)st.st_size,
+			 sizeof(chunk1) + sizeof(chunk2));
 		unlink(name);
 		return;
 	}
@@ -463,10 +467,9 @@ static void case_pwrite_coexist(void)
 	unsigned char rbuf[16];
 	if (pread_all(fd, rbuf, sizeof(rbuf), 0, "case5: read pwrite region") == 0) {
 		if (memcmp(rbuf, over, sizeof(over)) != 0) {
-			if (!Sflag)
-				printf("NOTE: %s: case5 pwrite data at offset 0 "
-				       "not found (Linux NFS client O_APPEND "
-				       "override)\n", myname);
+			complain("case5: pwrite data not at offset 0 "
+				 "(Linux NFS client O_APPEND override of "
+				 "pwrite -- POSIX violation)");
 		}
 	}
 
