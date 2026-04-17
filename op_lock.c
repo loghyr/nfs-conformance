@@ -141,6 +141,14 @@ static void case_wrlock_whole(void)
 	if (fd < 0) return;
 
 	if (try_lock(fd, F_WRLCK, 0, 0, F_SETLK) != 0) {
+		if (errno == ENOLCK) {
+			close(fd);
+			unlink(name);
+			skip("%s: F_SETLK returned ENOLCK -- NFS lock "
+			     "manager not running on this client "
+			     "(start lockd / nfslockd and re-mount)",
+			     myname);
+		}
 		complain("case1: F_SETLK(F_WRLCK, whole): %s",
 			 strerror(errno));
 		goto out;
