@@ -19,6 +19,21 @@
  *      zero AND st_blocks should be strictly less than pre-punch
  *      (WARN-only -- some backends can't shrink; e.g. tmpfs).
  *
+ *   4. Zero-length punch.  Must return 0 (no-op) or EINVAL; the
+ *      POSIX fallocate spec is silent about zero length but Linux
+ *      documents 0 as invalid for PUNCH_HOLE.  File content and
+ *      st_blocks must be unchanged either way.
+ *
+ *   5. Negative offset / negative length.  Must return EINVAL.
+ *      Guards against servers that translate a negative to a huge
+ *      unsigned and punch the whole file.
+ *
+ *   6. Overlapping punches.  Punch [0..64K) then punch [32K..96K).
+ *      Post-state: [0..96K) reads zero, [96K..EOF) intact, size
+ *      unchanged.  Catches servers that fail the second DEALLOCATE
+ *      because of the existing hole, or that incorrectly extend the
+ *      first hole's bookkeeping past the second range.
+ *
  * PUNCH_HOLE on Linux requires FALLOC_FL_KEEP_SIZE; this is what
  * the NFSv4.2 client translates into DEALLOCATE.
  */
@@ -235,6 +250,162 @@ static void case_full_punch(int fd)
 	free(buf);
 }
 
+static void case_zero_length_punch(int fd)
+{
+	if (write_pattern(fd, 0x42) < 0)
+		return;
+	fdatasync(fd);
+
+	struct stat before, after;
+	if (fstat(fd, &before) != 0) {
+		complain("case4: fstat before: %s", strerror(errno));
+		return;
+	}
+
+	int mode = FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE;
+	errno = 0;
+	int rc = fallocate(fd, mode, HOLE_OFF, 0);
+	int saved = errno;
+	if (rc != 0 && saved != EINVAL) {
+		if (saved == EOPNOTSUPP || saved == ENOSYS) {
+			skip("%s: fallocate returned %s", myname,
+			     strerror(saved));
+		}
+		complain("case4: zero-length punch: expected 0 or EINVAL, "
+			 "got %s", strerror(saved));
+		return;
+	}
+
+	if (fstat(fd, &after) != 0) {
+		complain("case4: fstat after: %s", strerror(errno));
+		return;
+	}
+	if (after.st_size != before.st_size)
+		complain("case4: size changed across zero-length punch "
+			 "(%lld -> %lld)",
+			 (long long)before.st_size,
+			 (long long)after.st_size);
+	if (after.st_blocks != before.st_blocks && !Sflag)
+		printf("NOTE: %s: case4 zero-length punch changed "
+		       "st_blocks (%lld -> %lld)\n", myname,
+		       (long long)before.st_blocks,
+		       (long long)after.st_blocks);
+
+	/* Content untouched. */
+	unsigned char *buf = malloc(FILE_LEN);
+	unsigned char *exp = malloc(FILE_LEN);
+	if (!buf || !exp) {
+		complain("case4: malloc");
+	} else if (pread_all(fd, buf, FILE_LEN, 0, "case4:verify") == 0) {
+		fill_pattern(exp, FILE_LEN, 0x42);
+		if (memcmp(buf, exp, FILE_LEN) != 0)
+			complain("case4: content altered by zero-length punch");
+	}
+	free(buf);
+	free(exp);
+}
+
+static void case_negative_offset_or_length(int fd)
+{
+	if (write_pattern(fd, 0x63) < 0)
+		return;
+	fdatasync(fd);
+
+	int mode = FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE;
+
+	errno = 0;
+	if (fallocate(fd, mode, -1, 4096) == 0)
+		complain("case5: negative offset accepted (must EINVAL)");
+	else if (errno != EINVAL && errno != EOPNOTSUPP && errno != ENOSYS)
+		complain("case5: negative offset returned %s (expected EINVAL)",
+			 strerror(errno));
+
+	errno = 0;
+	if (fallocate(fd, mode, 0, -1) == 0)
+		complain("case5: negative length accepted (must EINVAL)");
+	else if (errno != EINVAL && errno != EOPNOTSUPP && errno != ENOSYS)
+		complain("case5: negative length returned %s (expected EINVAL)",
+			 strerror(errno));
+
+	/* Content untouched after the rejected calls. */
+	unsigned char *buf = malloc(FILE_LEN);
+	unsigned char *exp = malloc(FILE_LEN);
+	if (!buf || !exp) {
+		complain("case5: malloc");
+	} else if (pread_all(fd, buf, FILE_LEN, 0, "case5:verify") == 0) {
+		fill_pattern(exp, FILE_LEN, 0x63);
+		if (memcmp(buf, exp, FILE_LEN) != 0)
+			complain("case5: content altered by rejected punch "
+				 "(server translated negative to huge "
+				 "unsigned and punched the whole file?)");
+	}
+	free(buf);
+	free(exp);
+}
+
+static void case_overlapping_punches(int fd)
+{
+	if (write_pattern(fd, 0x77) < 0)
+		return;
+	fdatasync(fd);
+
+	off_t off_a = 0;
+	off_t len_a = 64 * 1024;
+	off_t off_b = 32 * 1024;
+	off_t len_b = 64 * 1024;   /* b ends at 96 K */
+	off_t combined_end = off_b + len_b;
+
+	if (punch(fd, off_a, len_a) != 0) {
+		complain("case6: first punch: %s", strerror(errno));
+		return;
+	}
+	if (punch(fd, off_b, len_b) != 0) {
+		complain("case6: second punch (overlapping): %s",
+			 strerror(errno));
+		return;
+	}
+
+	struct stat st;
+	if (fstat(fd, &st) != 0) {
+		complain("case6: fstat: %s", strerror(errno));
+		return;
+	}
+	if (st.st_size != FILE_LEN)
+		complain("case6: size changed across overlapping punches "
+			 "(got %lld expected %lld)",
+			 (long long)st.st_size, (long long)FILE_LEN);
+
+	/* Punched union [0..96K) reads zero. */
+	unsigned char *z = malloc(combined_end);
+	if (!z) {
+		complain("case6: malloc z");
+	} else if (pread_all(fd, z, (size_t)combined_end, 0,
+			     "case6:union") == 0) {
+		if (!all_zero(z, (size_t)combined_end))
+			complain("case6: union [0..%lld) not zero after "
+				 "overlapping punches",
+				 (long long)combined_end);
+	}
+	free(z);
+
+	/* Tail [96K..EOF) still pattern. */
+	size_t tail_len = FILE_LEN - combined_end;
+	unsigned char *tail = malloc(tail_len);
+	unsigned char *exp  = malloc(FILE_LEN);
+	if (!tail || !exp) {
+		complain("case6: malloc tail/exp");
+	} else if (pread_all(fd, tail, tail_len, combined_end,
+			     "case6:tail") == 0) {
+		fill_pattern(exp, FILE_LEN, 0x77);
+		if (memcmp(tail, exp + combined_end, tail_len) != 0)
+			complain("case6: tail corrupted past overlapping "
+				 "punch union (second punch leaked past "
+				 "its length?)");
+	}
+	free(tail);
+	free(exp);
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -275,6 +446,11 @@ next:
 	RUN_CASE("case_basic_punch", case_basic_punch(fd));
 	RUN_CASE("case_hole_at_eof", case_hole_at_eof(fd));
 	RUN_CASE("case_full_punch", case_full_punch(fd));
+	RUN_CASE("case_zero_length_punch", case_zero_length_punch(fd));
+	RUN_CASE("case_negative_offset_or_length",
+		 case_negative_offset_or_length(fd));
+	RUN_CASE("case_overlapping_punches",
+		 case_overlapping_punches(fd));
 
 	close(fd);
 	unlink(name);
