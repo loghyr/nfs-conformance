@@ -573,7 +573,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: fsync(2) / fdatasync(2) trigger a COMMIT op that forces server write-back. Subsequent operations see the committed data, and fsync also persists parent-directory mutations and fallocate allocations.
 
-**Cases**: `case_fsync_roundtrip`, `case_fdatasync_roundtrip`, `case_log_style`, `case_fsync_ronly_fd`, `case_fsync_empty`, `case_fsync_after_unlink_hardlink` (generic/039), `case_fsync_after_fallocate` (generic/042).
+**Cases**: `case_fsync_roundtrip`, `case_fdatasync_roundtrip`, `case_log_style`, `case_fsync_ronly_fd`, `case_fsync_empty`, `case_fsync_after_unlink_hardlink` (generic/039), `case_fsync_after_fallocate` (generic/042), `case_parent_dir_mutations_survive_fsync` (generic/321).
 
 **Failure patterns**
 
@@ -584,6 +584,10 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case6: a.nlink=%ld after unlink of b (expected 1)` | nlink attribute stale on fresh fd. Server GETATTR returned old count. | Server change-attribute semantics; check whether unlink bumps the directory's change attr and inode attrs. |
 | `case7: stale content in fallocate-but-never-written range` | ALLOCATE exposed uninitialised backing bytes. Real integrity bug — server must zero-fill or reserve without exposing. | Capture a READ of the range via wire trace; compare what the server returns with the inode's allocated block state. |
 | `case7 posix_fallocate ... - skipping` | Environmental: macOS, or NFS server refuses ALLOCATE. | Not a failure. |
+| `case8: b still visible after rename to b_new` | Stale readdir cache: fresh opendir still shows the pre-rename name. Client didn't invalidate on rename, or server didn't persist the dirent mutation before replying. | `mount -o actimeo=0` to force fresh attrs; compare. If still FAIL, server-side dirent persistence bug. |
+| `case8: c still visible after unlink` | Stale readdir cache on unlink. Usually the same client bug as the rename variant. | Same as above. |
+| `case8: a_link missing from fresh opendir` | New hardlink not visible after fsync + fresh opendir. | Check client's readdir coherence on link(2); capture the READDIR RPC. |
+| `case8: a.nlink=%ld ... (expected 2)` | nlink attr stale on fresh stat after link. | Server's LINK op didn't bump nlink in the attr cache, or client re-used a stale GETATTR. |
 
 **Environmental gates**: Case 7 skipped on macOS (no posix_fallocate) or when server rejects ALLOCATE.
 
@@ -845,7 +849,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: `copy_file_range(2)` maps to NFSv4.2 intra-server COPY. Data is transferred server-side (no round-trip through client memory) when source and destination are on the same server.
 
-**Cases**: `case_simple`, `case_offset`, `case_sparse_preservation`, `case_matrix_api` (generic/430).
+**Cases**: `case_simple`, `case_offset`, `case_sparse_preservation`, `case_matrix_api` (generic/430), `case_short_copy_atomicity` (generic/265).
 
 **Failure patterns**
 
@@ -859,6 +863,9 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case4b: unexpected errno ... (expected EINVAL)` | Non-zero flags argument not rejected. | Some older kernels accept unknown flags; if persistent on recent kernels, server/client API contract violation. |
 | `case4c: over-copy %zd > src %zu` | Returned more bytes than src holds. Really a bug. | Capture wire trace of COPY; check server's src-EOF handling. |
 | `case4c: EOF call returned %zd (expected 0)` | Second call past EOF should return 0; returned something else. | Server advances soff past EOF; should stop cleanly. |
+| `case5: returned %zd, expected 1..%zu` | Short-copy returned 0 (illegal when src is non-empty and soff starts at 0) or more bytes than src holds. | Capture wire trace of COPY; compare server's reported byte-count against actual src size. |
+| `case5: dst[0..%zd) != pattern A` | Short-copy wrote wrong source bytes — src offset or data-path confusion. | Compare src_off / dst_off reported in the COPY RPC against expected. |
+| `case5: dst byte %zu = 0x%02x, expected 0x%02x (pattern B)` | Short-copy altered dst bytes past the returned count — tail zero-filled or garbage. This is the generic/265 class bug. | Real integrity bug: dst tail must be untouched on short copies. |
 
 **False positives**: `copy_file_range` may fall back to a read/write loop on the client — all-zero hole preservation still required but may behave differently. Not a failure.
 
@@ -870,9 +877,9 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Tier**: SPEC (NFSv4.2 CLONE, RFC 7862 §5)
 
-**Asserts**: `ioctl(FICLONE)` creates a copy-on-write clone. Modifications to src do not affect dst.
+**Asserts**: `ioctl(FICLONE)` creates a copy-on-write clone. Modifications to src do not affect dst. Clones survive src truncate and src unlink. `FICLONERANGE` targets only the requested byte range.
 
-**Cases**: `case_basic_clone`, `case_cow_semantics`.
+**Cases**: `case_basic_clone`, `case_cow_semantics`, `case_clone_then_truncate_src`, `case_clone_then_unlink_src`, `case_clone_partial_range` (generic/110-149 matrix).
 
 **Failure patterns**
 
@@ -881,6 +888,13 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `ioctl(FICLONE): %s` | Filesystem doesn't support reflink. Common errors: EOPNOTSUPP, EINVAL, EXDEV. | Check backend FS (`mount | grep <fs>`); reflink requires btrfs, xfs with reflink=1, ZFS, or an NFSv4.2 server that supports CLONE over such a backend. |
 | `case2: dst was affected by src mutation` | COW broken — dst shares storage with src AND isn't marked CoW on write. Real bug; clones must isolate writes. | Inspect server-side reflink handling. Check kernel version. |
 | `clone content mismatch at byte %zu` | Initial clone didn't copy all bytes. | Server CLONE op implementation bug. |
+| `case3: dst size ... after truncating src (shared extents lost when src shrank)` | Backend implements CLONE as a lazy copy that treats src as the canonical holder; shrinking src dropped dst's blocks. | Check backend reflink implementation — it must refcount extents, not tie them to src's size. |
+| `case3: dst mismatch ... after truncating src (CoW retention broken)` | Same family as size-mismatch: dst content disappeared when src shrank. | Same as above. |
+| `case4: dst mismatch ... after unlinking src (shared extents dropped when src inode was removed)` | Inode unlink freed extents that dst was sharing — refcount-per-extent contract violated. | Real server-side bug; check the CLONE/reflink refcounting path. |
+| `case5: dst head [0..X) altered by FICLONERANGE` | Clone-range wrote outside its requested offset. | Server FICLONERANGE offset handling bug; compare wire request vs effect. |
+| `case5: dst tail altered by FICLONERANGE on middle range` | Clone-range wrote past its requested length. | Same as above for length handling. |
+| `case5: dst middle did not take on src pattern after FICLONERANGE` | Clone-range didn't actually replace dst content in the requested range. | Server is returning success without performing the clone; compare wire trace. |
+| `case5 FICLONERANGE ... (backend may require different alignment)` | Environmental: backend demands stricter alignment than the test chose. Skipped-as-NOTE. | Not a failure. Try tuning the test's `.src_offset` / `.src_length` if needed. |
 
 **False positives**: FICLONE skip on non-reflink FS is expected and self-documents.
 
@@ -1591,6 +1605,13 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `non-zero flag accepted` | op_copy | copy_file_range unknown flag not rejected with EINVAL (generic/430) |
 | `over-copy ... > src` | op_copy | copy_file_range returned more bytes than source holds (generic/430) |
 | `EOF call returned ... (expected 0)` | op_copy | copy_file_range past EOF did not short-circuit to 0 (generic/430) |
+| `b still visible after rename to b_new` | op_commit | Stale readdir cache across rename after fsync (generic/321) |
+| `c still visible after unlink` | op_commit | Stale readdir cache across unlink after fsync (generic/321) |
+| `a_link missing from fresh opendir` | op_commit | Hardlink not visible after fsync + fresh opendir (generic/321) |
+| `short-copy altered bytes past the returned count` | op_copy | copy_file_range tail zero-fill or garbage (generic/265) |
+| `shared extents lost when src shrank` | op_clone | CoW retention broken on src truncate (generic/110-149 matrix) |
+| `shared extents dropped when src inode was removed` | op_clone | CoW refcount broken on src unlink (generic/110-149 matrix) |
+| `dst head [0..X) altered by FICLONERANGE` | op_clone | FICLONERANGE offset/length leaked past request (generic/110-149 matrix) |
 | `iovec ... ordering broken` | op_writev | Client writev fragmentation reordered iovec elements |
 | `overwrite lost` | op_overwrite | Client write-coalescing or server ordering dropped the overwrite |
 | `zero overwrite was dropped; original ... survived` | op_overwrite | Server dedup path mis-handling zero over allocated block |
