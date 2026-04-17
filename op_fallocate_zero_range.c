@@ -5,6 +5,16 @@
  * which NFSv4.2 clients may map to a WRITE of zeros without punching
  * a hole (RFC 7862 S4 WRITE_SAME or a plain zeroing WRITE).
  *
+ * Charter tier: SPEC (NFSv4.2 ZERO_RANGE path, RFC 7862 S4)
+ *
+ * Ported from: xfstests generic/009 (FALLOC_FL_ZERO_RANGE test).
+ * NFS adaptation: xfstests asserts hole/extent layout via fiemap(2)
+ * after ZERO_RANGE; fiemap is not available over NFS.  We substitute
+ * pread() correctness checks (zeroed region reads all-zero; adjacent
+ * data intact) and a size-invariant check (KEEP_SIZE honoured).  The
+ * fiemap-based hole-vs-data distinction is dropped; only data content
+ * and file size are asserted.
+ *
  * Linux-only.  Runtime SKIP if FALLOC_FL_ZERO_RANGE returns EOPNOTSUPP
  * or EINVAL on the mount (not all NFS clients/servers translate this).
  *

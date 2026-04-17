@@ -85,6 +85,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 - [op_deleg_recall](#op_deleg_recall)
 - [op_deleg_read](#op_deleg_read)
 - [op_delegation_write](#op_delegation_write)
+- [op_deleg_setdeleg](#op_deleg_setdeleg)
 - [op_copy](#op_copy)
 - [op_clone](#op_clone)
 - [op_truncate_grow](#op_truncate_grow)
@@ -101,6 +102,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 - [op_at_variants](#op_at_variants)
 - [op_change_attr](#op_change_attr)
 - [op_deallocate](#op_deallocate)
+- [op_fallocate_zero_range](#op_fallocate_zero_range)
 - [op_directory](#op_directory)
 - [op_fd_sharing](#op_fd_sharing)
 - [op_fdopendir](#op_fdopendir)
@@ -806,6 +808,37 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 ---
 
+### <a id="op_deleg_setdeleg"></a>op_deleg_setdeleg
+
+**Tier**: SPEC (NFSv4 WANT_DELEGATION / delegation fcntl path, RFC 8881 S10.4 and S18.49)
+
+**Asserts**: The Linux `F_SETDELEG`/`F_GETDELEG` fcntl interface (kernel >= 6.x) correctly requests and queries NFSv4 read/write delegations. Ported from xfstests generic/787 (locktest -F); covers core NFS semantics using `fork()` within a single process. The locktest socket-sync protocol and chmod/unlink/rename break scenarios remain covered by xfstests generic/787.
+
+**Cases**: `case_read_delegation` (1 — read deleg take/query/release), `case_write_delegation` (2 — write deleg take/query/release), `case_setlease_interop` (3 — F_GETLEASE after F_SETDELEG), `case_refused_with_writer` (4 — EAGAIN with concurrent O_RDWR opener), `case_sigio_on_write_break` (5 — SIGIO on competing write open), `case_no_sigio_on_read` (6 — no SIGIO on compatible read open).
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `case1: F_GETDELEG returned %d, expected F_RDLCK (%d)` | Read delegation granted but F_GETDELEG reported wrong lock type. | NFS client F_SETDELEG bookkeeping bug. |
+| `case1: F_SETDELEG F_UNLCK: %s` | Could not release delegation just granted. | Client delegation release path. |
+| `case2: F_GETDELEG returned %d, expected F_WRLCK (%d)` | Write delegation granted but F_GETDELEG reported wrong lock type. | Same as case 1. |
+| `case2: F_SETDELEG F_UNLCK: %s` | Could not release write delegation. | Client delegation release path. |
+| `case4: F_SETDELEG: %s` | Unexpected error (not EAGAIN/EINVAL) when requesting delegation with writer present. | Check errno; real client or server error. |
+| `case5: F_SETOWN: %s` | Could not set SIGIO owner for break notification. | Client kernel fcntl path. |
+| `case5: fork: %s` | fork() failed in the write-break SIGIO case. | Resource exhaustion. |
+| `case6: F_SETOWN: %s` | Could not set SIGIO owner for the read-compat check. | Client kernel fcntl path. |
+| `case6: fork: %s` | fork() failed in the read-compat SIGIO case. | Resource exhaustion. |
+
+**NOTE conditions** (not failures):
+- `SIGIO not received within 5s` (case 5) — server may not have granted the initial delegation, or SIGIO break path not yet implemented in this kernel.
+- `F_SETDELEG granted read delegation despite concurrent O_RDWR opener` (case 4) — server behaviour is permissive; informational.
+- `SIGIO received after concurrent O_RDONLY open` (case 6) — server issued an unnecessary recall; not required by RFC 8881 S10.4.2 for compatible concurrent readers.
+
+**Environmental gates**: Linux only; `F_SETDELEG`/`F_GETDELEG` are Linux kernel extensions (>= 6.x). Returns `EINVAL` on older kernels → SKIP.
+
+---
+
 ### <a id="op_copy"></a>op_copy
 
 **Tier**: SPEC (NFSv4.2 COPY, RFC 7862 §7)
@@ -1128,6 +1161,37 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `hole region post-punch not zero` | Read after punch returned non-zero bytes. | Real bug. |
 
 **Environmental gates**: Linux only. NFSv4.2 server support required.
+
+---
+
+### <a id="op_fallocate_zero_range"></a>op_fallocate_zero_range
+
+**Tier**: SPEC (NFSv4.2 ZERO_RANGE path, RFC 7862 S4)
+
+**Asserts**: `fallocate(FALLOC_FL_ZERO_RANGE)` zeroes a byte range in-place without punching a hole or changing file size when `FALLOC_FL_KEEP_SIZE` is set. Ported from xfstests generic/009; `fiemap(2)`-based hole/extent checks are substituted with `pread()` correctness and size-invariant checks — fiemap is not available over NFS.
+
+**Cases**: `case_zero_mid_range` (1 — zero middle quarter, prefix/suffix intact), `case_zero_keep_size_at_eof` (2 — range past EOF with KEEP_SIZE), `case_mtime_after_zero` (3 — mtime advances), `case_negative_offset` (4 — EINVAL on negative offset), `case_full_zero` (5 — full file zeroed). Source: xfstests generic/009.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `case1: prefix corrupted at byte %zu` | Bytes before the zeroed region changed; write spilled outside the range. | Real client or server bug; check ZERO_RANGE offset/length encoding. |
+| `case1: zeroed region not all-zero` | ZERO_RANGE did not zero the target region. | Server did not apply the op, or client served stale cached data. |
+| `case1: suffix corrupted` | Bytes after the zeroed region changed; write spilled. | Same class as prefix corruption. |
+| `case1: size changed across ZERO_RANGE+KEEP_SIZE` | File grew or shrank when KEEP_SIZE was specified. | Server ignored KEEP_SIZE. |
+| `case2: ZERO_RANGE+KEEP_SIZE changed size` | Range extends past EOF but KEEP_SIZE must prevent growth. | Server ignored KEEP_SIZE on near-EOF range. |
+| `case2: tail not zero after ZERO_RANGE` | Region from tail_off to EOF was not zeroed. | ZERO_RANGE not applied to the in-file portion of the range. |
+| `case3: fsync: %s` | fsync() failed after ZERO_RANGE — write error flushing to server. | Check server state; EIO suggests server-side write failure. |
+| `case4: fallocate(ZERO_RANGE, -1, 4096) returned 0` | Negative offset accepted; EINVAL expected. | Client did not validate negative offset before sending to server. |
+| `case4: fallocate(ZERO_RANGE, -1, 4096) returned %s (expected EINVAL)` | Wrong errno for negative offset. | Errno mapping issue in client or server. |
+| `case5: size changed after full ZERO_RANGE+KEEP_SIZE` | Full-file ZERO_RANGE with KEEP_SIZE changed size. | Server or client KEEP_SIZE handling broken. |
+| `case5: file not all-zero after full ZERO_RANGE` | Full-file ZERO_RANGE left some bytes non-zero. | Partial application or stale client-side cache. |
+
+**NOTE conditions** (not failures):
+- `case3 mtime did not advance after ZERO_RANGE` — server may not update mtime for zero writes; informational (valid implementation choice).
+
+**Environmental gates**: Linux only (`FALLOC_FL_ZERO_RANGE` is Linux-specific). SKIP on `EOPNOTSUPP`/`EINVAL`/`ENOSYS` (NFS client or server does not translate ZERO_RANGE).
 
 ---
 
@@ -1554,6 +1618,15 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `NFS server followed the symlink on SETATTR` | op_symlink_nofollow | utimensat/fchownat on symlink modified target despite AT_SYMLINK_NOFOLLOW |
 | `parent nlink changed from %lu to %lu (regular-file unlink must not change parent nlink)` | op_unlink | Server reports file entries in directory nlink (APFS quirk; fails cleanly on POSIX fs) |
 | `case6: byte %zu = 0x%02x (expected 0x00) -- zero overwrite was dropped` | op_overwrite | Server dropped explicit-zero write over already-allocated block — buggy dedup path |
+| `zeroed region not all-zero` | op_fallocate_zero_range | FALLOC_FL_ZERO_RANGE did not zero the target region — server did not apply op or client returned stale cache |
+| `prefix corrupted at byte` | op_fallocate_zero_range | ZERO_RANGE write spilled outside the specified range |
+| `suffix corrupted` | op_fallocate_zero_range | ZERO_RANGE write spilled past end of specified range |
+| `size changed across ZERO_RANGE+KEEP_SIZE` | op_fallocate_zero_range | Server ignored FALLOC_FL_KEEP_SIZE |
+| `tail not zero after ZERO_RANGE` | op_fallocate_zero_range | In-file portion of near-EOF ZERO_RANGE not applied |
+| `file not all-zero after full ZERO_RANGE` | op_fallocate_zero_range | Full-file ZERO_RANGE partial or stale cache |
+| `F_GETDELEG returned %d, expected F_RDLCK` | op_deleg_setdeleg | NFS client F_SETDELEG read-delegation bookkeeping returned wrong lock type |
+| `F_GETDELEG returned %d, expected F_WRLCK` | op_deleg_setdeleg | NFS client F_SETDELEG write-delegation bookkeeping returned wrong lock type |
+| `SIGIO not received within 5s` | op_deleg_setdeleg | Server did not grant delegation or SIGIO break path not yet implemented |
 
 ---
 
