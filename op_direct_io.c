@@ -439,19 +439,33 @@ static void case_failed_write_no_stale_data(void)
 		close(rfd); free(aligned); unlink(a); return;
 	}
 	if (pread_all(rfd, rbuf, DIO_SIZE, 0,
-		      "case6: read after failed write") == 0) {
+		      "case6: read after pwrite attempt") == 0) {
 		size_t miss = check_pattern(rbuf, DIO_SIZE, 0xA5A5);
-		if (miss) {
-			complain("case6: pattern A corrupted at byte %zu "
-				 "after rejected unaligned write "
-				 "(partial update exposed stale/new bytes; "
-				 "pwrite returned %zd errno=%s)",
-				 miss - 1, n, strerror(saved));
-		} else if (n >= 0 && !Sflag) {
+		/*
+		 * Two legal outcomes:
+		 *   (a) pwrite returned -1: file content must be
+		 *       unchanged (the integrity invariant from
+		 *       xfstests generic/250).  miss != 0 here is the
+		 *       real bug -- partial update after a rejected
+		 *       write.
+		 *   (b) pwrite returned >= 0: the kernel accepted the
+		 *       unaligned write (common on NFS, which is more
+		 *       permissive than block devices).  Any content
+		 *       mutation is expected and not a finding.
+		 */
+		if (n < 0) {
+			if (miss)
+				complain("case6: pattern A corrupted at "
+					 "byte %zu after pwrite returned "
+					 "-1/%s (rejected write must be "
+					 "all-or-nothing, not a partial "
+					 "update)",
+					 miss - 1, strerror(saved));
+		} else if (!Sflag) {
 			printf("NOTE: %s: case6 unaligned O_DIRECT pwrite "
-			       "accepted (%zd bytes) but file content "
-			       "preserved — NFS was permissive and atomic\n",
-			       myname, n);
+			       "accepted (%zd bytes); content mutation is "
+			       "expected -- NFS is permissive about "
+			       "alignment\n", myname, n);
 		}
 	}
 	free(rbuf);

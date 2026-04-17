@@ -448,7 +448,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case3: reader saw stale data (O_DIRECT write not reflected server-side)` | O_DIRECT write didn't reach the server before the fresh reader's GETATTR-then-READ. | Client O_DIRECT path didn't force WRITE+COMMIT. Check client's O_DIRECT implementation. |
 | `case3: reader saw short read` | Similar: server size attribute hadn't updated. | Same as above. |
 | `case2: data mismatch after O_DIRECT write + buffered read` | Round-trip corruption via O_DIRECT. | Very suspicious — check alignment, check cache coherence. |
-| `case6: pattern A corrupted at byte %zu after rejected unaligned write` | Rejected/partial O_DIRECT pwrite left torn content on disk — should be all-or-nothing. | Real integrity bug: capture both wire traces (the rejected WRITE and the subsequent READ) and compare. |
+| `case6: pattern A corrupted at byte %zu after pwrite returned -1/%s` | pwrite returned -1 yet the file content changed — rejected writes must be all-or-nothing, never a partial update. | Real integrity bug: capture both wire traces (the rejected WRITE and the subsequent READ) and compare. |
 
 **False positives**: O_DIRECT rejection (EINVAL) is reported as NOTE, not FAIL — expected on some servers.
 
@@ -1512,7 +1512,7 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `OFD lock released by closing unrelated fd` | op_lock_posix | OFD owner-per-fd semantics violated |
 | `server did not honor FILE_SYNC` | op_sync_dsync | O_SYNC/O_DSYNC write returned before server committed |
 | `O_DIRECT write not reflected server-side` | op_direct_io | Client O_DIRECT path didn't force WRITE+COMMIT |
-| `pattern A corrupted at byte %zu after rejected unaligned write` | op_direct_io | Rejected O_DIRECT pwrite left torn content on disk (generic/250 shape) |
+| `pattern A corrupted at byte %zu after pwrite returned -1` | op_direct_io | Rejected O_DIRECT pwrite left torn content on disk (generic/250 shape) |
 | `b still present after fsync + reopen` | op_commit | Parent-directory unlink not persisted by fsync on the sibling file (generic/039) |
 | `stale content in fallocate-but-never-written range` | op_commit | Server exposed uninitialised disk bytes from an ALLOCATE-extended range (generic/042) |
 | `illegal size ... torn write / partial truncate` | op_aio_races | pwrite vs ftruncate race left file in an illegal mixed state (generic/114) |
