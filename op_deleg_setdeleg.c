@@ -26,10 +26,13 @@
  *
  * Skip conditions:
  *   - Non-Linux: skip unconditionally.
- *   - Kernel too old: F_SETDELEG returns EINVAL (22); skip.
- *   - Server refuses delegation: F_SETDELEG returns EAGAIN; emit NOTE
- *     and skip the affected case (not a failure -- server is allowed
- *     to refuse).
+ *   - Kernel too old / syscall absent: F_SETDELEG returns EINVAL or
+ *     ENOSYS; skip the whole test.
+ *   - Server refuses delegation: F_SETDELEG returns EAGAIN or
+ *     EOPNOTSUPP (NFS client returns EOPNOTSUPP when the server
+ *     rejects WANT_DELEGATION with NFS4ERR_NOTSUPP or similar);
+ *     emit NOTE and skip the affected case (not a failure -- server
+ *     is allowed to refuse WANT_DELEGATION).
  *
  * Cases:
  *
@@ -137,27 +140,27 @@ static void usage(void)
  * try_setdeleg -- call fcntl(fd, F_SETDELEG, ltype).
  * Returns:
  *    0  on success (delegation granted)
- *    1  EAGAIN (server refused; emit NOTE if !Sflag)
- *   -1  EINVAL (feature unsupported -- calls skip())
+ *    1  EAGAIN or EOPNOTSUPP (server/client does not support; NOTE emitted)
  *   -2  other error (calls complain())
+ * Calls skip() (does not return) on EINVAL or ENOSYS.
  */
 static int try_setdeleg(int fd, int ltype, const char *ctx)
 {
 	if (fcntl(fd, F_SETDELEG, ltype) == 0)
 		return 0;
-	if (errno == EINVAL) {
-		skip("%s: F_SETDELEG returned EINVAL -- kernel does not "
+	if (errno == EINVAL || errno == ENOSYS) {
+		skip("%s: F_SETDELEG returned %s -- kernel does not "
 		     "support F_SETDELEG (need Linux >= 6.x with NFS "
 		     "delegation support)",
-		     myname);
+		     myname, strerror(errno));
 		/* skip() does not return */
 	}
-	if (errno == EAGAIN) {
+	if (errno == EAGAIN || errno == EOPNOTSUPP) {
 		if (!Sflag)
-			printf("NOTE: %s: %s: F_SETDELEG returned EAGAIN "
+			printf("NOTE: %s: %s: F_SETDELEG returned %s "
 			       "(server did not grant delegation) -- case "
 			       "skipped\n",
-			       myname, ctx);
+			       myname, ctx, strerror(errno));
 		return 1;
 	}
 	complain("%s: F_SETDELEG: %s", ctx, strerror(errno));
@@ -287,7 +290,8 @@ static void case_refused_with_writer(const char *name)
 	}
 
 	int rc = fcntl(fd2, F_SETDELEG, F_RDLCK);
-	if (rc == -1 && errno == EINVAL) {
+	if (rc == -1 && (errno == EINVAL || errno == ENOSYS ||
+			  errno == EOPNOTSUPP)) {
 		/* Already handled by case 1's try_setdeleg; just close */
 	} else if (rc == -1 && errno == EAGAIN) {
 		/* Expected: server refused due to write reference */

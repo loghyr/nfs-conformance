@@ -789,7 +789,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case1: F_SETDELEG F_UNLCK: %s` | Could not release delegation just granted. | Client delegation release path. |
 | `case2: F_GETDELEG returned %d, expected F_WRLCK (%d)` | Write delegation granted but F_GETDELEG reported wrong lock type. | Same as case 1. |
 | `case2: F_SETDELEG F_UNLCK: %s` | Could not release write delegation. | Client delegation release path. |
-| `case4: F_SETDELEG: %s` | Unexpected error (not EAGAIN/EINVAL) when requesting delegation with writer present. | Check errno; real client or server error. |
+| `case4: F_SETDELEG: %s` | Unexpected error (not EAGAIN/EINVAL/EOPNOTSUPP) when requesting delegation with writer present. | Check errno; real client or server error. |
 | `case5: F_SETOWN: %s` | Could not set SIGIO owner for break notification. | Client kernel fcntl path. |
 | `case5: fork: %s` | fork() failed in the write-break SIGIO case. | Resource exhaustion. |
 | `case6: F_SETOWN: %s` | Could not set SIGIO owner for the read-compat check. | Client kernel fcntl path. |
@@ -800,7 +800,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 - `F_SETDELEG granted read delegation despite concurrent O_RDWR opener` (case 4) — server behaviour is permissive; informational.
 - `SIGIO received after concurrent O_RDONLY open` (case 6) — server issued an unnecessary recall; not required by RFC 8881 S10.4.2 for compatible concurrent readers.
 
-**Environmental gates**: Linux only; `F_SETDELEG`/`F_GETDELEG` are Linux kernel extensions (>= 6.x). Returns `EINVAL` on older kernels → SKIP.
+**Environmental gates**: Linux only; `F_SETDELEG`/`F_GETDELEG` are Linux kernel extensions (>= 6.x). Returns `EINVAL` or `ENOSYS` on older kernels → whole-test SKIP. Returns `EOPNOTSUPP` when the NFS client sends WANT_DELEGATION but the server responds with NFS4ERR_NOTSUPP (e.g., reffs without WANT_DELEGATION support) → per-case NOTE + skip (not a failure).
 
 ---
 
