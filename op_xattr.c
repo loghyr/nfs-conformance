@@ -431,11 +431,13 @@ static void case_removexattr_missing(const char *path)
 	if (rc == 0) {
 		complain("case8: removexattr on missing name succeeded "
 			 "(expected ENODATA)");
-	} else if (errno != ENODATA && errno != ENOATTR) {
+	} else if (errno != ENODATA) {
 		/*
-		 * Linux returns ENODATA; some Linux flavours alias
-		 * ENOATTR to it.  Either is acceptable.  Anything else
-		 * is a conformance bug.
+		 * Linux returns ENODATA for a missing xattr.  We're already
+		 * inside `#if defined(__linux__)`, so we don't need the BSD
+		 * ENOATTR alias (which glibc's <errno.h> does not define;
+		 * some attr.h shims alias it to ENODATA but we can't rely on
+		 * that without a build-time probe).
 		 */
 		complain("case8: removexattr on missing name returned %s "
 			 "(expected ENODATA)", strerror(errno));
