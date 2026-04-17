@@ -18,6 +18,17 @@ Each test drives the op under test via its portable userspace
 equivalent.  If the equivalent is unavailable on the running system,
 the test SKIPs instead of failing.
 
+### Naming
+
+Test binaries are prefixed `op_` as a namespace marker — it
+distinguishes conformance test binaries from helpers (`subr.o`,
+the `cb_*_probe` tools) and makes `op_*` unambiguous in Makefile
+lists, shell globs, and `.gitignore` negations.  The prefix
+historically stood for "NFSv4 operation" and most tests still name
+the op they exercise, but it applies equally to tests that target
+POSIX features, mount-option behaviours, or NFS client semantics
+with no one-to-one RFC operation.
+
 ### NFSv4.2 (RFC 7862)
 
 | Test | Op | Userspace API | Portability |
