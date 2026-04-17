@@ -72,6 +72,45 @@ static void one_advice(int fd, off_t off, off_t len, int advice,
 			 strerror(rc));
 }
 
+/* Shared scratch fd for all cases. */
+static int adv_fd = -1;
+
+static void case_all_advices(void)
+{
+	struct {
+		int advice;
+		const char *name;
+	} pool[] = {
+		{ POSIX_FADV_NORMAL,     "NORMAL" },
+		{ POSIX_FADV_RANDOM,     "RANDOM" },
+		{ POSIX_FADV_SEQUENTIAL, "SEQUENTIAL" },
+		{ POSIX_FADV_WILLNEED,   "WILLNEED" },
+		{ POSIX_FADV_DONTNEED,   "DONTNEED" },
+		{ POSIX_FADV_NOREUSE,    "NOREUSE" },
+	};
+	for (size_t i = 0; i < sizeof(pool) / sizeof(pool[0]); i++)
+		one_advice(adv_fd, 0, FILE_LEN, pool[i].advice, pool[i].name);
+}
+
+static void case_zero_length_range(void)
+{
+	one_advice(adv_fd, 0, 0, POSIX_FADV_WILLNEED, "WILLNEED,len=0");
+}
+
+static void case_range_beyond_eof(void)
+{
+	one_advice(adv_fd, FILE_LEN * 2, FILE_LEN, POSIX_FADV_WILLNEED,
+		   "WILLNEED,beyond-EOF");
+}
+
+static void case_invalid_advice(void)
+{
+	int rc = posix_fadvise(adv_fd, 0, FILE_LEN, 999 /* bogus */);
+	if (rc != 0 && rc != EINVAL)
+		complain("case4: invalid advice: expected 0 or EINVAL, got %s",
+			 strerror(rc));
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -104,36 +143,18 @@ next:
 	cd_or_skip(myname, dir, Nflag);
 
 	char name[64];
-	int fd = scratch_open("t11", name, sizeof(name));
-	if (ftruncate(fd, FILE_LEN) != 0)
+	adv_fd = scratch_open("t11", name, sizeof(name));
+	if (ftruncate(adv_fd, FILE_LEN) != 0)
 		bail("ftruncate: %s", strerror(errno));
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	struct {
-		int advice;
-		const char *name;
-	} pool[] = {
-		{ POSIX_FADV_NORMAL,     "NORMAL" },
-		{ POSIX_FADV_RANDOM,     "RANDOM" },
-		{ POSIX_FADV_SEQUENTIAL, "SEQUENTIAL" },
-		{ POSIX_FADV_WILLNEED,   "WILLNEED" },
-		{ POSIX_FADV_DONTNEED,   "DONTNEED" },
-		{ POSIX_FADV_NOREUSE,    "NOREUSE" },
-	};
-	for (size_t i = 0; i < sizeof(pool) / sizeof(pool[0]); i++)
-		one_advice(fd, 0, FILE_LEN, pool[i].advice, pool[i].name);
+	RUN_CASE("case_all_advices",       case_all_advices());
+	RUN_CASE("case_zero_length_range", case_zero_length_range());
+	RUN_CASE("case_range_beyond_eof",  case_range_beyond_eof());
+	RUN_CASE("case_invalid_advice",    case_invalid_advice());
 
-	one_advice(fd, 0, 0, POSIX_FADV_WILLNEED, "WILLNEED,len=0");
-	one_advice(fd, FILE_LEN * 2, FILE_LEN, POSIX_FADV_WILLNEED,
-		   "WILLNEED,beyond-EOF");
-
-	int rc = posix_fadvise(fd, 0, FILE_LEN, 999 /* bogus */);
-	if (rc != 0 && rc != EINVAL)
-		complain("invalid advice: expected 0 or EINVAL, got %s",
-			 strerror(rc));
-
-	close(fd);
+	close(adv_fd);
 	unlink(name);
 
 	if (Tflag) {
