@@ -177,8 +177,15 @@ static int make_owned_file(const char *tag, char *out, size_t outsz,
 	}
 	char buf[64];
 	memset(buf, 'O', sizeof(buf));
-	(void)write(fd, buf, sizeof(buf));
+	ssize_t w = write(fd, buf, sizeof(buf));
 	close(fd);
+	if (w != (ssize_t)sizeof(buf)) {
+		complain("%s: write %zd / %zu: %s",
+			 tag, w, sizeof(buf),
+			 w < 0 ? strerror(errno) : "short");
+		unlink(out);
+		return -1;
+	}
 	if (chmod(out, mode) != 0) {
 		complain("%s: chmod(0%o): %s", tag, mode, strerror(errno));
 		unlink(out);

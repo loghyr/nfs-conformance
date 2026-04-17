@@ -133,7 +133,14 @@ static void case_rmdir_readdir(void)
 		return;
 	}
 
-	DIR *dp = fdopendir(dup(dirfd));
+	/*
+	 * Materialise the dup into a named fd so we can close it on
+	 * the fdopendir-failure path.  Previously `fdopendir(dup(...))`
+	 * leaked the dup'd fd when fdopendir returned NULL (fdopendir
+	 * takes ownership only on success).
+	 */
+	int tfd = dup(dirfd);
+	DIR *dp = tfd >= 0 ? fdopendir(tfd) : NULL;
 	if (dp) {
 		struct dirent *de;
 		errno = 0;
@@ -146,6 +153,7 @@ static void case_rmdir_readdir(void)
 		}
 		closedir(dp);
 	} else {
+		if (tfd >= 0) close(tfd);
 		if (errno != ENOENT && errno != ESTALE && errno != EBADF) {
 			if (!Sflag)
 				printf("NOTE: %s: case3 fdopendir on removed "

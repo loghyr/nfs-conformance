@@ -546,13 +546,23 @@ static void case_cb_getattr(const char *server, const char *nfs_dir)
 		_exit(errno == ENOENT ? 77 : 1);
 	}
 
-	/* Parent: collect probe output */
+	/* Parent: collect probe output.  Loop until EOF so a write()
+	 * that splits across the fork/exec barrier or arrives in
+	 * multiple kernel deliveries doesn't produce a truncated
+	 * buffer that sscanf then fails to parse. */
 	close(pfd[1]);
 	char out[128] = { 0 };
-	ssize_t n = read(pfd[0], out, sizeof(out) - 1);
+	size_t filled = 0;
+	while (filled < sizeof(out) - 1) {
+		ssize_t n = read(pfd[0], out + filled,
+				 sizeof(out) - 1 - filled);
+		if (n > 0) { filled += (size_t)n; continue; }
+		if (n == 0) break;                  /* EOF */
+		if (errno == EINTR) continue;
+		break;
+	}
+	out[filled] = '\0';
 	close(pfd[0]);
-	if (n > 0)
-		out[n] = '\0';
 
 	int wstatus = 0;
 	waitpid(pid, &wstatus, 0);

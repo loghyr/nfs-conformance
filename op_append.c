@@ -184,7 +184,11 @@ static void case_append_after_write(void)
 	close(fd);
 
 	struct stat st;
-	stat(name, &st);
+	if (stat(name, &st) != 0) {
+		complain("case2: stat: %s", strerror(errno));
+		unlink(name);
+		return;
+	}
 	if (st.st_size != (off_t)(sizeof(orig) + sizeof(extra)))
 		complain("case2: size %lld, expected %zu (append may have "
 			 "overwritten original data)",
@@ -240,7 +244,11 @@ static void case_lseek_overridden(void)
 	close(fd);
 
 	struct stat st;
-	stat(name, &st);
+	if (stat(name, &st) != 0) {
+		complain("case3: stat: %s", strerror(errno));
+		unlink(name);
+		return;
+	}
 	if (st.st_size != (off_t)(sizeof(first) + sizeof(second)))
 		complain("case3: size %lld, expected %zu (POSIX: lseek must "
 			 "be overridden by O_APPEND; write must go to EOF)",
@@ -305,7 +313,7 @@ static void case_concurrent(void)
 		for (int i = 0; i < nrec; i++) {
 			rec[0] = 'C';
 			rec[1] = (char)(i & 0xff);
-			if (write(cfd, rec, sizeof(rec)) != sizeof(rec))
+			if (write(cfd, rec, sizeof(rec)) != (ssize_t)sizeof(rec))
 				_exit(1);
 		}
 		close(cfd);
@@ -320,6 +328,7 @@ static void case_concurrent(void)
 	fd = open(name, O_WRONLY | O_APPEND);
 	if (fd < 0) {
 		complain("case4: parent open: %s", strerror(errno));
+		close(pipefd[0]);           /* fixed: no longer leak */
 		goto reap;
 	}
 
@@ -328,7 +337,7 @@ static void case_concurrent(void)
 	for (int i = 0; i < nrec; i++) {
 		rec[0] = 'P';
 		rec[1] = (char)(i & 0xff);
-		if (write(fd, rec, sizeof(rec)) != sizeof(rec)) {
+		if (write(fd, rec, sizeof(rec)) != (ssize_t)sizeof(rec)) {
 			complain("case4: parent write %d: %s", i,
 				 strerror(errno));
 			break;
@@ -366,7 +375,7 @@ reap:
 	for (off_t off = 0; off < st.st_size; off += recsz) {
 		char rbuf[32];
 		ssize_t n = pread(fd, rbuf, sizeof(rbuf), off);
-		if (n != sizeof(rbuf)) { bad++; continue; }
+		if (n != (ssize_t)sizeof(rbuf)) { bad++; continue; }
 		if (rbuf[0] == 'P') p_count++;
 		else if (rbuf[0] == 'C') c_count++;
 		else bad++;

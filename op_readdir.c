@@ -106,7 +106,17 @@ static void rmdir_r1(const char *dirpath)
 		if (strcmp(de->d_name, ".") == 0 ||
 		    strcmp(de->d_name, "..") == 0)
 			continue;
-		snprintf(path, sizeof(path), "%s/%s", dirpath, de->d_name);
+		int n = snprintf(path, sizeof(path), "%s/%s",
+				 dirpath, de->d_name);
+		if (n < 0 || (size_t)n >= sizeof(path)) {
+			/*
+			 * Truncation: the resulting path is wrong; unlinking
+			 * or rmdir'ing it would operate on the wrong target
+			 * and silently corrupt cleanup.  Skip this entry and
+			 * let the surrounding test complain about the litter.
+			 */
+			continue;
+		}
 		if (unlink(path) != 0)
 			rmdir(path);
 	}

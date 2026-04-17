@@ -92,7 +92,12 @@ static int make_scratch_dir(char *out, size_t outsz, int casenum)
 			/* dir + '/' + NAME_MAX + '\0' easily fits in 512. */
 			char p[512];
 			snprintf(p, sizeof(p), "%s/%s", out, e->d_name);
-			unlink(p);
+			/* On EISDIR (a prior aborted run left a subdir),
+			 * fall back to rmdir; otherwise the subsequent
+			 * mkdir(out) fails with EEXIST and the whole test
+			 * FAILs spuriously. */
+			if (unlink(p) != 0 && errno == EISDIR)
+				rmdir(p);
 		}
 		closedir(d);
 		rmdir(out);
@@ -123,7 +128,8 @@ static void cleanup_dir(const char *dir)
 			    strcmp(e->d_name, "..") == 0) continue;
 			char p[512];
 			snprintf(p, sizeof(p), "%s/%s", dir, e->d_name);
-			unlink(p);
+			if (unlink(p) != 0 && errno == EISDIR)
+				rmdir(p);
 		}
 		closedir(d);
 	}
@@ -392,23 +398,41 @@ static void case_two_streams(void)
 		return;
 	}
 
-	/* Advance d1 by 3, advance d2 by 6.  Neither should interfere
-	 * with the other's position. */
-	for (int i = 0; i < 3; i++) (void)readdir(d1);
-	for (int i = 0; i < 6; i++) (void)readdir(d2);
+	/*
+	 * Advance d1 to the 3rd real entry and d2 to the 6th real
+	 * entry, counting only non-dot / non-dotdot dirents so the
+	 * comparison is deterministic regardless of how the server
+	 * orders "." and "..".  Then count remaining real entries;
+	 * d1 should have more remaining than d2.
+	 */
+	int seen1 = 0, seen2 = 0;
+	struct dirent *e;
+	while (seen1 < 3 && (e = readdir(d1)) != NULL)
+		if (strcmp(e->d_name, ".") != 0
+		    && strcmp(e->d_name, "..") != 0)
+			seen1++;
+	while (seen2 < 6 && (e = readdir(d2)) != NULL)
+		if (strcmp(e->d_name, ".") != 0
+		    && strcmp(e->d_name, "..") != 0)
+			seen2++;
 
 	int n1 = 0, n2 = 0;
-	while (readdir(d1)) n1++;
-	while (readdir(d2)) n2++;
+	while ((e = readdir(d1)) != NULL)
+		if (strcmp(e->d_name, ".") != 0
+		    && strcmp(e->d_name, "..") != 0)
+			n1++;
+	while ((e = readdir(d2)) != NULL)
+		if (strcmp(e->d_name, ".") != 0
+		    && strcmp(e->d_name, "..") != 0)
+			n2++;
 	closedir(d1);
 	closedir(d2);
 
-	/* Can't predict exact counts without tracking skipped "." and
-	 * "..", but n1 should exceed n2 (d1 started earlier). */
-	if (n1 <= n2)
-		complain("case5: two DIR* streams show interference "
-			 "(d1 remaining=%d, d2 remaining=%d; d1 should be "
-			 "further behind and thus larger remainder)",
+	/* d1 advanced 3 real entries, d2 advanced 6 -- out of 10
+	 * populated.  d1 should have 7 left, d2 should have 4. */
+	if (n1 != 7 || n2 != 4)
+		complain("case5: two DIR* streams interfere: d1 remaining="
+			 "%d (expected 7), d2 remaining=%d (expected 4)",
 			 n1, n2);
 
 	cleanup_dir(dir);
