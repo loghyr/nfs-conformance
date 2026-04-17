@@ -161,7 +161,11 @@ static void case_direct_round_trip(void)
 		unlink(a);
 		return;
 	}
-	char verify[DIO_SIZE];
+	unsigned char *verify = malloc(DIO_SIZE);
+	if (!verify) {
+		complain("case2: malloc verify");
+		close(rfd); free(buf); unlink(a); return;
+	}
 	ssize_t r = read(rfd, verify, DIO_SIZE);
 	close(rfd);
 	if (r != (ssize_t)DIO_SIZE) {
@@ -172,6 +176,7 @@ static void case_direct_round_trip(void)
 			 "buffered read");
 	}
 
+	free(verify);
 	free(buf);
 	unlink(a);
 }
@@ -226,7 +231,11 @@ static void case_direct_cross_visibility(void)
 		unlink(a);
 		return;
 	}
-	char verify[DIO_SIZE];
+	unsigned char *verify = malloc(DIO_SIZE);
+	if (!verify) {
+		complain("case3: malloc verify");
+		close(rfd); close(wfd); free(buf); unlink(a); return;
+	}
 	ssize_t r = read(rfd, verify, DIO_SIZE);
 	close(rfd);
 	close(wfd);
@@ -239,6 +248,7 @@ static void case_direct_cross_visibility(void)
 			 "reflected server-side before reader's open)");
 	}
 
+	free(verify);
 	free(buf);
 	unlink(a);
 }

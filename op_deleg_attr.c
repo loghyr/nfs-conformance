@@ -644,12 +644,31 @@ static int read_mount_getattr_count(const char *dir, unsigned long long *count)
 			if (!m)
 				continue;
 			m += strlen(" mounted on ");
-			/* Copy mountpoint up to the next " " or end of line */
+			/*
+			 * Copy mountpoint up to the next " " (field separator)
+			 * or newline, un-escaping octal sequences on the fly.
+			 * mountstats / mountinfo encode special chars in the
+			 * path as \NNN -- \040 for space, \011 for tab, \012
+			 * for newline, \134 for backslash.  Without un-escaping,
+			 * any mount path containing a literal space would
+			 * silently mismatch realpath()'s output and -m strict
+			 * mode would degrade to 'mountstats unavailable'.
+			 */
 			char mp[PATH_MAX];
 			size_t i = 0;
-			while (*m && *m != ' ' && *m != '\n' &&
-			       i + 1 < sizeof(mp))
-				mp[i++] = *m++;
+			while (*m && *m != ' ' && *m != '\n'
+			       && i + 1 < sizeof(mp)) {
+				if (*m == '\\' && m[1] >= '0' && m[1] <= '7'
+				    && m[2] >= '0' && m[2] <= '7'
+				    && m[3] >= '0' && m[3] <= '7') {
+					mp[i++] = (char)(((m[1] - '0') << 6)
+							| ((m[2] - '0') << 3)
+							|  (m[3] - '0'));
+					m += 4;
+				} else {
+					mp[i++] = *m++;
+				}
+			}
 			mp[i] = '\0';
 			if (strcmp(mp, abs_dir) == 0)
 				in_target_mount = 1;

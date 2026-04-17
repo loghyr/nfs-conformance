@@ -1501,6 +1501,11 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `entry '%s' seen twice` | op_readdir, op_readdir_many | Duplicate from readdir — cookie replay or reply duplication |
 | `btime shifted under utimensat` | op_statx_btime | Server treats btime as mutable — defeats its purpose |
 | `file vanished after rename(a, a)` | op_rename_self | Pre-POSIX.1-2024 rename-self semantic |
+| `32-bit offset truncation` | op_read_write_large | I/O at offset > 4 GiB returned data from a 32-bit-truncated offset |
+| `linkat appears to have followed the symlink` | op_linkat | linkat(AT_SYMLINK_FOLLOW off) still resolved through the symlink — server bug |
+| `NFS server followed the symlink on SETATTR` | op_symlink_nofollow | utimensat/fchownat on symlink modified target despite AT_SYMLINK_NOFOLLOW |
+| `parent nlink changed from %lu to %lu (regular-file unlink must not change parent nlink)` | op_unlink | Server reports file entries in directory nlink (APFS quirk; fails cleanly on POSIX fs) |
+| `case6: byte %zu = 0x%02x (expected 0x00) -- zero overwrite was dropped` | op_overwrite | Server dropped explicit-zero write over already-allocated block — buggy dedup path |
 
 ---
 
