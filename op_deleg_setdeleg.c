@@ -4,10 +4,19 @@
  * op_deleg_setdeleg.c -- exercise F_SETDELEG / F_GETDELEG fcntl
  * interface (Linux kernel >= 6.x, Jeff Layton).
  *
- * F_SETDELEG allows a process to explicitly request an NFSv4 delegation
- * from the server on an open fd, without going through the implicit
- * delegation-on-open path.  On NFS the kernel sends a separate WANT_
- * DELEGATION request; the server grants or refuses.
+ * Charter tier: SPEC (NFSv4 WANT_DELEGATION / delegation fcntl path,
+ *                      RFC 8881 S10.4 and S18.49)
+ *
+ * Ported from: xfstests generic/787 (file delegation test, locktest -F).
+ * NFS adaptation: xfstests drives two synchronized processes via a
+ * socket-based protocol in locktest(8) and covers 13 scenarios including
+ * chmod/unlink/rename breaks.  Here we use fork() within a single test
+ * process (no cross-machine socket) and cover only the core NFS
+ * semantics: delegation take/release, F_GETDELEG readback, F_SETLEASE
+ * interop, EAGAIN when a writer is present, SIGIO on write-break, and
+ * no-SIGIO on compatible read.  The locktest socket-sync protocol and
+ * the chmod/unlink/rename break scenarios are out of scope for this
+ * single-client test; they remain covered by xfstests generic/787.
  *
  * This test is Linux-only and self-contained: no cb_recall_probe or
  * second NFS client is required.  SIGIO break cases use fork() within
