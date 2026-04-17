@@ -205,18 +205,24 @@ static void case_tmpfile_linkat(void)
 	unlink(name);
 
 	if (linkat(fd, "", AT_FDCWD, name, AT_EMPTY_PATH) != 0) {
-		if (errno == ENOENT && !Sflag) {
-			/* Some setups require /proc/self/fd/%d path form
+		if (errno == ENOENT) {
+			/*
+			 * Some setups require /proc/self/fd/%d path form
 			 * because AT_EMPTY_PATH needs CAP_DAC_READ_SEARCH.
-			 * Retry via the /proc form. */
+			 * Retry via the /proc form regardless of -s; the
+			 * Sflag only gates the diagnostic prints, not the
+			 * correctness path.
+			 */
 			char proc[64];
 			snprintf(proc, sizeof(proc),
 				 "/proc/self/fd/%d", fd);
 			if (linkat(AT_FDCWD, proc, AT_FDCWD, name,
 				   AT_SYMLINK_FOLLOW) != 0) {
-				printf("NOTE: %s: case4 linkat(AT_EMPTY_PATH) "
-				       "and /proc fallback both failed (%s)\n",
-				       myname, strerror(errno));
+				if (!Sflag)
+					printf("NOTE: %s: case4 linkat"
+					       "(AT_EMPTY_PATH) and /proc "
+					       "fallback both failed (%s)\n",
+					       myname, strerror(errno));
 				close(fd);
 				return;
 			}
