@@ -67,6 +67,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 - [op_lock](#op_lock)
 - [op_lock_posix](#op_lock_posix)
 - [op_ofd_lock](#op_ofd_lock)
+- [op_flock](#op_flock)
 - [op_append](#op_append)
 - [op_sync_dsync](#op_sync_dsync)
 - [op_commit](#op_commit)
@@ -524,6 +525,33 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 ---
 
+### <a id="op_flock"></a>op_flock
+
+**Tier**: SPEC (flock(2) BSD advisory lock model)
+
+**Asserts**: flock(2) locks are whole-file, owned by the open file description (shared by dup'd fds), and independent of fcntl F_SETLK locks on the same file. LOCK_EX excludes both LOCK_EX and LOCK_SH from other fds; LOCK_SH stacks across fds; dup'd fds share the lock state; close releases the lock even without explicit LOCK_UN.
+
+**Cases**: `case_exclusive_lock`, `case_shared_stack`, `case_exclusive_shared_conflict`, `case_dup_shares_lock_state`, `case_close_releases`.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `case1: LOCK_EX: %s` / skip with `flock returned ENOLCK or EOPNOTSUPP` | NFS lock manager unavailable, or flock not routed by this kernel on this mount. | Environmental: NLM / nfslockd must be running. Case auto-skips with ENOLCK/EOPNOTSUPP. |
+| `case2: LOCK_SH fd B alongside A: %s (shared locks must stack)` | Two LOCK_SH from the same process couldn't coexist. Server doesn't honor shared flock stacking. | Real server bug. |
+| `case2: LOCK_EX via C succeeded while B still holds LOCK_SH` | Releasing A's lock erroneously released B's -- the two locks got conflated. | Real client or server bug; per-fd owner tracking broken. |
+| `case3: LOCK_EX via B succeeded while A holds LOCK_EX` | Exclusive locks stacked; conflict detection broken. | Real server bug. |
+| `case3: LOCK_SH via B succeeded while A holds LOCK_EX` | Shared didn't block on held exclusive. | Same class as above. |
+| `case3: LOCK_EX NB expected EWOULDBLOCK, got %s` | Non-blocking conflict returned wrong errno. | Conformance bug but not functional. |
+| `case4: LOCK_EX after dup's LOCK_UN failed with %s (dup did not release the shared open-file description's lock)` | LOCK_UN via dup'd fd didn't release the shared lock. The open-file-description vs fd-descriptor contract is the defining flock invariant -- if this fails, the kernel is treating flock like an OFD lock. | Real client bug. |
+| `case5: LOCK_EX after close returned %s (close did not release the flock)` | Close didn't trigger UNLOCK. Common NFS client bug: the client forgot to send UNLOCK when the last fd closed. | Real client bug; capture wire trace for missing UNLOCK. |
+
+**False positives**: ENOLCK / EOPNOTSUPP causes SKIP, not FAIL.
+
+**Environmental gates**: NFS lock manager running. Mount must route flock (some Linux mount configs disable it).
+
+---
+
 ### <a id="op_append"></a>op_append
 
 **Tier**: POSIX (O_APPEND atomicity)
@@ -795,11 +823,19 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Tier**: SPEC (NFSv4 read delegation + recall on write)
 
-**Asserts**: Read delegation is granted; a conflicting write from another client recalls the delegation.
+**Asserts**: Read delegation is granted; a conflicting write from another client recalls the delegation. Close-after-recall leaves the fd in a clean state. The client's own write invalidates its own read delegation.
 
-**Failure patterns**: Similar to op_deleg_recall.
+**Cases**: `case_local_shared_read`, `case_shared_read`, `case_recall_by_write`, `case_clean_close_after_recall`, `case_self_write_visible_through_read_holder`.
 
-**Environmental gates**: Needs `cb_recall_probe`.
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `caseN: data mismatch` | Concurrent other-client access disturbed the held fd's view. | Similar to op_deleg_recall; capture wire trace for CB_RECALL handling. |
+| `case4: close after recall returned %s (fd stuck in half-recalled state -- client bug)` | close() returned ESTALE/EIO/EBADF on an fd whose delegation was recalled. Known client-bug class. | Real client-side bug; check the delegation-return + close path. |
+| `case5: read holder saw pattern A at byte %zu after self-write of pattern B (read delegation not invalidated by own write)` | Process held a read delegation, wrote to the same file via a second fd, but the held fd still sees stale content. Self-coherence contract broken. | Real client bug: own writes must invalidate own read delegations. |
+
+**Environmental gates**: Needs `cb_recall_probe` for cross-client cases 2/3/4. Case 1 and case 5 run locally without a probe.
 
 ---
 
@@ -1167,7 +1203,9 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Tier**: SPEC (NFSv4.2 DEALLOCATE, RFC 7862 §10)
 
-**Asserts**: `fallocate(FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE)` punches a hole in an existing file. Size unchanged, `st_blocks` may drop, reads from the hole return zeros.
+**Asserts**: `fallocate(FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE)` punches a hole in an existing file. Size unchanged, `st_blocks` may drop, reads from the hole return zeros. Zero-length, negative, and overlapping punches behave correctly (reject or no-op, never silent corruption).
+
+**Cases**: `case_basic_punch`, `case_hole_at_eof`, `case_full_punch`, `case_zero_length_punch`, `case_negative_offset_or_length`, `case_overlapping_punches`.
 
 **Failure patterns**
 
@@ -1177,6 +1215,14 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `size changed across PUNCH_HOLE` | PUNCH_HOLE must not change file size (with KEEP_SIZE). If it did, server misimplemented the op. | Real bug. |
 | `st_blocks grew across PUNCH_HOLE` | Hole punch shouldn't add blocks. | Server side — possibly server emulated PUNCH_HOLE with write-of-zeros. |
 | `hole region post-punch not zero` | Read after punch returned non-zero bytes. | Real bug. |
+| `case4: zero-length punch: expected 0 or EINVAL, got %s` | Zero-length PUNCH returned an unexpected errno. | Check server's boundary handling; POSIX is silent, Linux says EINVAL. |
+| `case4: size changed across zero-length punch` | Zero-length punch mutated file size. | Server translated len=0 into a non-trivial operation. Real bug. |
+| `case4: content altered by zero-length punch` | Zero-length punch actually wrote bytes. | Same family as size change: real bug. |
+| `case5: negative offset accepted (must EINVAL)` / `case5: negative length accepted` | Kernel/server accepted a sign-negative argument. The content check after catches the worst case: -1 interpreted as UINT64_MAX. | Real integrity bug if content changed. Conformance bug even if not. |
+| `case5: content altered by rejected punch ... punched the whole file?` | Sign-mangled argument actually performed a whole-file PUNCH despite the syscall returning an error. | Critical server bug; capture wire trace. |
+| `case6: second punch (overlapping): %s` | Server rejected a PUNCH that overlaps an existing hole. | Server bookkeeping bug: DEALLOCATE must be idempotent across overlapping ranges. |
+| `case6: union [0..X) not zero after overlapping punches` | Second punch left bytes non-zero in its requested range. | Real bug. |
+| `case6: tail corrupted past overlapping punch union` | Second punch leaked past its requested length, usually because the server extended the first hole's bookkeeping. | Server bookkeeping bug. |
 
 **Environmental gates**: Linux only. NFSv4.2 server support required.
 
@@ -1615,6 +1661,14 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `shared extents lost when src shrank` | op_clone | CoW retention broken on src truncate (generic/110-149 matrix) |
 | `shared extents dropped when src inode was removed` | op_clone | CoW refcount broken on src unlink (generic/110-149 matrix) |
 | `dst head [0..X) altered by FICLONERANGE` | op_clone | FICLONERANGE offset/length leaked past request (generic/110-149 matrix) |
+| `content altered by rejected punch ... punched the whole file?` | op_deallocate | Sign-negative fallocate arg interpreted as huge unsigned, punched whole file |
+| `union [0..X) not zero after overlapping punches` | op_deallocate | Overlapping PUNCH_HOLE left non-zero bytes in requested range |
+| `tail corrupted past overlapping punch union` | op_deallocate | Second PUNCH_HOLE leaked past its requested length |
+| `fd stuck in half-recalled state` | op_deleg_read | close(2) returned error on a fd whose delegation was recalled |
+| `read delegation not invalidated by own write` | op_deleg_read | Self-coherence broken: own writes didn't invalidate own read deleg |
+| `shared locks must stack` | op_flock | Two LOCK_SH couldn't coexist on flock |
+| `dup did not release the shared open-file description's lock` | op_flock | LOCK_UN via dup'd fd didn't clear the flock (OFD-style behavior mis-applied) |
+| `close did not release the flock` | op_flock | Close didn't trigger UNLOCK on an flock-held fd |
 | `iovec ... ordering broken` | op_writev | Client writev fragmentation reordered iovec elements |
 | `overwrite lost` | op_overwrite | Client write-coalescing or server ordering dropped the overwrite |
 | `zero overwrite was dropped; original ... survived` | op_overwrite | Server dedup path mis-handling zero over allocated block |
