@@ -65,7 +65,7 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_timestamps op_fd_sharing \
         op_errno_rename op_errno_open op_path_limits op_symlink_loop \
         op_errno_link op_sticky_bit \
-        op_read_write op_zero_to_hole op_writev \
+        op_read_write op_zero_to_hole op_writev op_concurrent_writes \
         op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write
 
 # Second-client probes (not invoked by `prove`).  These exist only
