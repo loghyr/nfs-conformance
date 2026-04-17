@@ -40,6 +40,24 @@
  *   5. Two concurrent DIR* streams on the same directory (separate
  *      opendir calls): each stream must iterate independently.
  *
+ *   6. Addition during iteration: create N entries, readdir K,
+ *      create new entries in the un-iterated tail, continue
+ *      readdir.  POSIX allows newly-added entries to appear or
+ *      not during an ongoing iteration.  The test only asserts
+ *      that iteration doesn't fail, doesn't revisit already-
+ *      reported entries, and doesn't skip entries that existed at
+ *      open time.  If new entries ARE visible, we NOTE the count
+ *      rather than FAIL -- that's the server being generous with
+ *      its directory snapshot, not a bug.
+ *
+ *   7. Same-name replacement mid-iteration: create N entries,
+ *      readdir K, unlink an un-iterated entry, then create a
+ *      new file with the SAME name.  Continuation must either
+ *      see the new entry or skip -- critically, must not crash,
+ *      not loop, not emit an entry with mixed old/new state
+ *      (inode number from the old inode with the new name, etc).
+ *      This is a classic server-side cookie regeneration corner.
+ *
  * Portable: POSIX.  telldir/seekdir behaviour on NFS is subject to
  * cookie semantics; tests report NOTE rather than FAIL when the
  * server demonstrably chose a permissible interpretation.
@@ -438,6 +456,226 @@ static void case_two_streams(void)
 	cleanup_dir(dir);
 }
 
+static void case_read_add_continue(void)
+{
+	char dir[64];
+	if (make_scratch_dir(dir, sizeof(dir), 6) != 0) {
+		complain("case6: mkdir scratch: %s", strerror(errno));
+		return;
+	}
+	const int initial = 10;
+	if (populate(dir, initial) != 0) {
+		complain("case6: populate: %s", strerror(errno));
+		cleanup_dir(dir);
+		return;
+	}
+
+	DIR *dp = opendir(dir);
+	if (!dp) {
+		complain("case6: opendir: %s", strerror(errno));
+		cleanup_dir(dir);
+		return;
+	}
+
+	/* Read half the entries. */
+	int seen_before_mutation = 0;
+	/* Track which original names we've seen. */
+	int seen[10] = { 0 };
+	struct dirent *e;
+	while (seen_before_mutation < 5 && (e = readdir(dp)) != NULL) {
+		if (strcmp(e->d_name, ".") == 0 ||
+		    strcmp(e->d_name, "..") == 0)
+			continue;
+		int idx;
+		if (sscanf(e->d_name, "f%3d", &idx) == 1
+		    && idx >= 0 && idx < initial) {
+			if (seen[idx]) {
+				complain("case6: entry f%03d reported twice "
+					 "before mutation", idx);
+				closedir(dp); cleanup_dir(dir); return;
+			}
+			seen[idx] = 1;
+		}
+		seen_before_mutation++;
+	}
+
+	/* Add 3 new entries ("new000".."new002") mid-iteration. */
+	for (int i = 0; i < 3; i++) {
+		char p[512];
+		snprintf(p, sizeof(p), "%s/new%03d", dir, i);
+		int fd = open(p, O_RDWR | O_CREAT | O_TRUNC, 0644);
+		if (fd < 0) {
+			complain("case6: add new%03d: %s", i, strerror(errno));
+			closedir(dp); cleanup_dir(dir); return;
+		}
+		close(fd);
+	}
+
+	/* Continue iteration. */
+	int saw_new = 0;
+	while ((e = readdir(dp)) != NULL) {
+		if (strcmp(e->d_name, ".") == 0 ||
+		    strcmp(e->d_name, "..") == 0)
+			continue;
+		int idx;
+		if (sscanf(e->d_name, "f%3d", &idx) == 1
+		    && idx >= 0 && idx < initial) {
+			if (seen[idx]) {
+				complain("case6: original entry f%03d reported "
+					 "twice across the mutation boundary",
+					 idx);
+				closedir(dp); cleanup_dir(dir); return;
+			}
+			seen[idx] = 1;
+		} else if (strncmp(e->d_name, "new", 3) == 0) {
+			saw_new++;
+		}
+	}
+	closedir(dp);
+
+	/* All 10 originals must be visible across the full iteration. */
+	int missing = 0;
+	for (int i = 0; i < initial; i++)
+		if (!seen[i]) missing++;
+	if (missing > 0)
+		complain("case6: %d of %d original entries missing after "
+			 "iteration spanning an add "
+			 "(entries existing at open time must not be lost)",
+			 missing, initial);
+
+	if (saw_new > 0 && !Sflag)
+		printf("NOTE: %s: case6 %d of 3 newly-added entries were "
+		       "visible during iteration (server is generous with "
+		       "directory snapshot; POSIX does not require either "
+		       "behaviour)\n", myname, saw_new);
+
+	cleanup_dir(dir);
+}
+
+static void case_read_replace_continue(void)
+{
+	char dir[64];
+	if (make_scratch_dir(dir, sizeof(dir), 7) != 0) {
+		complain("case7: mkdir scratch: %s", strerror(errno));
+		return;
+	}
+	const int n = 8;
+	if (populate(dir, n) != 0) {
+		complain("case7: populate: %s", strerror(errno));
+		cleanup_dir(dir);
+		return;
+	}
+
+	DIR *dp = opendir(dir);
+	if (!dp) {
+		complain("case7: opendir: %s", strerror(errno));
+		cleanup_dir(dir);
+		return;
+	}
+
+	/* Read a couple of entries, then pick an un-iterated target. */
+	int read_count = 0;
+	int seen[8] = { 0 };
+	struct dirent *e;
+	while (read_count < 3 && (e = readdir(dp)) != NULL) {
+		if (strcmp(e->d_name, ".") == 0 ||
+		    strcmp(e->d_name, "..") == 0)
+			continue;
+		int idx;
+		if (sscanf(e->d_name, "f%3d", &idx) == 1
+		    && idx >= 0 && idx < n)
+			seen[idx] = 1;
+		read_count++;
+	}
+
+	/* Pick an un-iterated target (first unseen index). */
+	int target = -1;
+	for (int i = 0; i < n; i++) {
+		if (!seen[i]) { target = i; break; }
+	}
+	if (target < 0) {
+		/* readdir returned all 8 in the first 3 reads; unlikely
+		 * but possible if '.', '..' and entries are interleaved.
+		 * Just skip -- nothing to mutate. */
+		closedir(dp);
+		cleanup_dir(dir);
+		if (!Sflag)
+			printf("NOTE: %s: case7: all entries iterated before "
+			       "mutation; skipping\n", myname);
+		return;
+	}
+
+	char path[512];
+	snprintf(path, sizeof(path), "%s/f%03d", dir, target);
+
+	/* Capture the original inode for the cross-check below. */
+	struct stat st_before;
+	if (stat(path, &st_before) != 0) {
+		complain("case7: stat original: %s", strerror(errno));
+		closedir(dp); cleanup_dir(dir); return;
+	}
+
+	/*
+	 * Unlink + recreate with the SAME name.  The new file gets a
+	 * fresh inode number.
+	 */
+	if (unlink(path) != 0) {
+		complain("case7: unlink target: %s", strerror(errno));
+		closedir(dp); cleanup_dir(dir); return;
+	}
+	int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0644);
+	if (fd < 0) {
+		complain("case7: recreate target: %s", strerror(errno));
+		closedir(dp); cleanup_dir(dir); return;
+	}
+	close(fd);
+
+	struct stat st_after;
+	if (stat(path, &st_after) != 0) {
+		complain("case7: stat recreated: %s", strerror(errno));
+		closedir(dp); cleanup_dir(dir); return;
+	}
+
+	/* Continue iteration; must not crash, not loop, not double-report. */
+	int target_hits = 0;
+	int loop_guard = 1024;
+	while (loop_guard-- > 0 && (e = readdir(dp)) != NULL) {
+		if (strcmp(e->d_name, ".") == 0 ||
+		    strcmp(e->d_name, "..") == 0)
+			continue;
+		int idx;
+		if (sscanf(e->d_name, "f%3d", &idx) == 1 && idx == target) {
+			target_hits++;
+			/*
+			 * If d_ino matches neither the old nor the new inode,
+			 * the server mixed up cookie + attribute state.
+			 * d_ino is 0 on some NFS mounts (getdents64 omits it);
+			 * skip that check if d_ino == 0.
+			 */
+			if (e->d_ino != 0
+			    && e->d_ino != (ino_t)st_before.st_ino
+			    && e->d_ino != (ino_t)st_after.st_ino) {
+				complain("case7: f%03d d_ino=%lu matches "
+					 "neither old inode %lu nor new "
+					 "inode %lu (mixed server state)",
+					 target, (unsigned long)e->d_ino,
+					 (unsigned long)st_before.st_ino,
+					 (unsigned long)st_after.st_ino);
+			}
+		}
+	}
+	if (loop_guard <= 0)
+		complain("case7: readdir loop exceeded 1024 iterations "
+			 "after same-name replace (server cookie loop?)");
+	if (target_hits > 1)
+		complain("case7: f%03d reported %d times after same-name "
+			 "replace (must not double-report)",
+			 target, target_hits);
+
+	closedir(dp);
+	cleanup_dir(dir);
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -480,6 +718,10 @@ next:
 		 case_telldir_seekdir_survival());
 	RUN_CASE("case_empty_after_delete", case_empty_after_delete());
 	RUN_CASE("case_two_streams", case_two_streams());
+	RUN_CASE("case_read_add_continue",
+		 case_read_add_continue());
+	RUN_CASE("case_read_replace_continue",
+		 case_read_replace_continue());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
