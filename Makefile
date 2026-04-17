@@ -3,9 +3,13 @@
 #
 # Makefile -- build the nfs-conformance suite.
 #
-# Plain Make, no autotools.  Each test is a single .c file linked
-# against subr.o, compiles to a standalone binary, and emits TAP13
-# when NFS_CONFORMANCE_TAP=1 is set in the environment.
+# Written to be portable between GNU make and BSD make (bmake).  No
+# pattern-rule syntax (%), no GNU-only functions (addprefix, patsubst).
+# Uses a single-suffix `.c:' rule that both implementations honour.
+#
+# Each test is a single .c file linked against subr.o, compiles to a
+# standalone binary, and emits TAP13 when NFS_CONFORMANCE_TAP=1 is set
+# in the environment.
 #
 # Targets:
 #   all      build every op_* binary and the cb_* probe tools
@@ -15,24 +19,21 @@
 #   install  copy binaries into $(DESTDIR)$(libexecdir)/nfs-conformance/
 #   xfstests copy xfstests wrappers into $(XFSTESTS_DIR)
 #
-# Common variables you may override on the command line:
+# Variables you may override on the command line:
 #   CC, CFLAGS, LDFLAGS, PREFIX, DESTDIR, CHECK_DIR, JOBS, XFSTESTS_DIR
 #
 #   CHECK_DIR     directory the test suite runs under; default "."
-#                 (cwd).  Set to an NFS mount to test over NFS:
-#                   make check CHECK_DIR=/mnt/nfs
-#
-#   JOBS          `check-j` parallelism; default 4.  Parallel runs on
-#                 the SAME mount are unsafe (tests share scratch-file
-#                 prefixes).  Use parallel only across independent
-#                 mounts, one process per mount.
-#
+#   JOBS          `check-j` parallelism; default 4.  Safe only across
+#                 INDEPENDENT -d mounts (tests share scratch-file
+#                 prefixes on a single mount).
 #   XFSTESTS_DIR  destination xfstests tree for `make xfstests`
-#                 (e.g. /usr/src/xfstests-dev).
 
 CC         ?= cc
-CFLAGS     ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -std=gnu11
-LDFLAGS    ?=
+# Append our warnings/flags so users can still set CFLAGS externally;
+# BSD make's default CFLAGS ("-O2 -pipe") is preserved, GNU make's
+# default (empty) gets a sensible set.
+CFLAGS     += -g -Wall -Wextra -Wno-unused-parameter -std=gnu11
+LDFLAGS    +=
 PREFIX     ?= /usr/local
 libexecdir ?= $(PREFIX)/libexec
 
@@ -55,8 +56,8 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write \
         op_server_caps
 
-# Auxiliary probe tools (not invoked by `prove`; used by individual
-# tests as helpers and available for manual debugging).
+# Auxiliary probe tools (not invoked by `prove`; helpers for a few
+# tests and available for manual debugging).
 PROBES = cb_getattr_probe cb_recall_probe
 
 CHECK_DIR ?= .
@@ -64,46 +65,58 @@ JOBS      ?= 4
 
 .PHONY: all clean check check-j install xfstests
 
+.SUFFIXES:
+.SUFFIXES: .c .o
+
 all: $(TESTS) $(PROBES)
 
 subr.o: subr.c tests.h
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c subr.c -o subr.o
 
-# Pattern rule: build each op_<name> from op_<name>.c + subr.o
-op_%: op_%.c subr.o tests.h
-	$(CC) $(CFLAGS) $(LDFLAGS) $< subr.o -o $@
+# Single-suffix rule: build `foo' from `foo.c', linking subr.o.
+# Honoured by both GNU make and BSD make.  Applies to every op_*
+# target; probes and op_deleg_attr have explicit rules below that
+# override it.  Using $*.c rather than $< because BSD make's $<
+# in a single-suffix rule points to a transformation intermediate,
+# not the .c source.
+.c:
+	$(CC) $(CFLAGS) $(LDFLAGS) $*.c subr.o -o $@
 
-# Probe tools: standalone binaries, no test harness dependency.
+# Every test has subr.o as an extra prerequisite (the .c: recipe
+# links it in).  The prerequisite declaration itself is rule-less;
+# the recipe is supplied by .c: above.  Both GNU make and BSD make
+# combine the prerequisites correctly.
+$(TESTS): subr.o tests.h
+
+# Probe tools: standalone binaries, no subr.o dependency.
 cb_getattr_probe: cb_getattr_probe.c rpc_wire.h
 	$(CC) $(CFLAGS) $(LDFLAGS) cb_getattr_probe.c -o cb_getattr_probe
 
 cb_recall_probe: cb_recall_probe.c rpc_wire.h
 	$(CC) $(CFLAGS) $(LDFLAGS) cb_recall_probe.c -o cb_recall_probe
 
-# op_server_caps uses rpc_wire.h directly (in addition to the standard deps)
-op_server_caps: rpc_wire.h
-
-# op_deleg_attr uses pthreads for case 8 (thread-stat-no-callback); override
-# the pattern rule so the link line adds -pthread.
+# op_deleg_attr uses pthreads for case 8 (thread-stat-no-callback).
 op_deleg_attr: op_deleg_attr.c subr.o tests.h
-	$(CC) $(CFLAGS) $(LDFLAGS) -pthread $< subr.o -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) -pthread op_deleg_attr.c subr.o -o op_deleg_attr
+
+# op_server_caps pulls in rpc_wire.h directly.
+op_server_caps: op_server_caps.c subr.o tests.h rpc_wire.h
+	$(CC) $(CFLAGS) $(LDFLAGS) op_server_caps.c subr.o -o op_server_caps
 
 clean:
 	rm -f $(TESTS) $(PROBES) subr.o
 	rm -rf *.dSYM
 
-# Run every op_* via `prove` with TAP mode enabled.  Each binary
-# emits its own `1..N` plan; prove aggregates, surfacing ok / not ok
-# / skip counts.  Tests receive `-d $(CHECK_DIR)` via PROVE_ARGS so
-# they drive the chosen mount point.
+# Run every op_* via `prove` with TAP mode enabled.  Tests get
+# `-d $(CHECK_DIR)` via prove's `::' argument passthrough.  Shell
+# printf prefixes `./' to each element of $(TESTS) so prove executes
+# the local binary rather than a PATH lookup.
 check: all
-	NFS_CONFORMANCE_TAP=1 prove -e '' $(addprefix ./,$(TESTS)) :: -d $(CHECK_DIR)
+	NFS_CONFORMANCE_TAP=1 prove -e '' `printf './%s ' $(TESTS)` :: -d $(CHECK_DIR)
 
-# Parallel variant.  Safe only across independent -d mounts; on a
-# single mount, tests collide on scratch-file prefixes.  Override:
-#   make check-j JOBS=8
+# Parallel variant.  Safe only across independent -d mounts.
 check-j: all
-	NFS_CONFORMANCE_TAP=1 prove -j $(JOBS) -e '' $(addprefix ./,$(TESTS)) :: -d $(CHECK_DIR)
+	NFS_CONFORMANCE_TAP=1 prove -j $(JOBS) -e '' `printf './%s ' $(TESTS)` :: -d $(CHECK_DIR)
 
 install: all
 	install -d $(DESTDIR)$(libexecdir)/nfs-conformance
