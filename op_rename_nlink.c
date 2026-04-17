@@ -10,40 +10,37 @@
  * mean directory nlink is (2 + number_of_subdirectories), and
  * cross-parent renames must update BOTH parent directories' nlink.
  *
- * POSIX.1-2008 rename() requires (paraphrased):
- *
- *   - If old names a directory and new names an existing directory,
- *     new shall be removed.  The directory containing old shall be
- *     updated to reflect the change in the number of links.
- *     (POSIX.1-2008 rename() description, Effects on Directory
- *     Link Counts)
- *
- *   - Upon successful completion, rename() shall mark for update
- *     the last data modification and last file status change
- *     timestamps of the parent directory of each file.
- *     (POSIX.1-2008 rename(), "Upon successful completion" clause)
- *
  * Cases:
  *
  *   1. Move directory cross-parent.  mkdir src/sub, mkdir dst.
- *      Rename src/sub to dst/sub.  Verify src nlink decrements
- *      by 1 and dst nlink increments by 1.
- *      (POSIX.1-2008 rename(), directory link-count update rule)
+ *      Rename src/sub to dst/sub.  Report src nlink -= 1 and dst
+ *      nlink += 1 if deviating (NOTE only -- see link-count
+ *      discussion below).
  *
  *   2. Rename-replace directory.  mkdir p/a, mkdir p/b.  Rename
- *      p/a to p/b (replacing b).  Verify p nlink decrements by 1
- *      (net: one directory removed).
- *      (POSIX.1-2008 rename(), directory link-count update rule)
+ *      p/a to p/b (replacing b).  Report p nlink -= 1 if deviating
+ *      (NOTE only).
  *
- *   3. Move regular file cross-parent.  Parent nlink must NOT
- *      change (only directories contribute to parent nlink via "..").
- *      (POSIX.1-2008 rename(), directory link-count rule: only
- *      directory entries via ".." affect parent nlink)
+ *   3. Move regular file cross-parent.  Parent nlink MUST NOT
+ *      change for a file rename.  (A file contributes zero links
+ *      to its parent directory, so the parent's nlink is
+ *      unaffected.)
  *
  *   4. Parent mtime/ctime advance.  Both source and destination
- *      parent directories must have mtime/ctime advance after a
+ *      parent directories MUST have mtime/ctime advance after a
  *      cross-parent rename.
  *      (POSIX.1-2008 rename(), "Upon successful completion" clause)
+ *
+ * Directory link-count discussion:
+ *   The traditional Unix convention is st_nlink == 2 + number of
+ *   subdirectories, counting the parent's entry plus the ".." entry
+ *   from each subdirectory.  POSIX.1-2008 does NOT mandate this
+ *   convention; stat() only requires st_nlink to be a count of
+ *   hard links >= 1.  Many modern filesystems and NFS server
+ *   backends report a constant st_nlink for every directory.  Cases
+ *   1 and 2 emit a NOTE when the traditional convention is not
+ *   followed rather than failing an otherwise-POSIX-conformant
+ *   server.
  *
  * Portable: POSIX.1-2008 rename() across Linux / FreeBSD / macOS / Solaris.
  */
@@ -124,15 +121,30 @@ static void case_cross_parent_dir(void)
 		return;
 	}
 
-	if (st_src_after.st_nlink != st_src_before.st_nlink - 1)
-		complain("case1: src nlink %lu -> %lu (expected -%d)",
-			 (unsigned long)st_src_before.st_nlink,
-			 (unsigned long)st_src_after.st_nlink, 1);
+	/*
+	 * POSIX.1-2008 does NOT require the traditional Unix
+	 * "st_nlink == 2 + number_of_subdirectories" convention for
+	 * directories; st_nlink need only be >= 1.  Many modern
+	 * filesystems (and NFS server backends) report a constant
+	 * st_nlink = 1 or 2 for every directory.  Report the observed
+	 * delta as a NOTE rather than failing the server for
+	 * conforming-to-POSIX-but-not-to-tradition behaviour.
+	 */
+	if (st_src_after.st_nlink != st_src_before.st_nlink - 1 && !Sflag)
+		printf("NOTE: %s: case1 src nlink %lu -> %lu (traditional "
+		       "Unix expects -1 after moving a subdirectory out; "
+		       "POSIX.1-2008 only requires st_nlink >= 1)\n",
+		       myname,
+		       (unsigned long)st_src_before.st_nlink,
+		       (unsigned long)st_src_after.st_nlink);
 
-	if (st_dst_after.st_nlink != st_dst_before.st_nlink + 1)
-		complain("case1: dst nlink %lu -> %lu (expected +%d)",
-			 (unsigned long)st_dst_before.st_nlink,
-			 (unsigned long)st_dst_after.st_nlink, 1);
+	if (st_dst_after.st_nlink != st_dst_before.st_nlink + 1 && !Sflag)
+		printf("NOTE: %s: case1 dst nlink %lu -> %lu (traditional "
+		       "Unix expects +1 after receiving a subdirectory; "
+		       "POSIX.1-2008 only requires st_nlink >= 1)\n",
+		       myname,
+		       (unsigned long)st_dst_before.st_nlink,
+		       (unsigned long)st_dst_after.st_nlink);
 
 	rmdir(newsub);
 	rmdir(src);
@@ -175,11 +187,16 @@ static void case_rename_replace_dir(void)
 		return;
 	}
 
-	if (st_after.st_nlink != st_before.st_nlink - 1)
-		complain("case2: parent nlink %lu -> %lu (expected -%d "
-			 "after replace)",
-			 (unsigned long)st_before.st_nlink,
-			 (unsigned long)st_after.st_nlink, 1);
+	/* See case1 note: POSIX.1-2008 does not require the
+	 * "nlink = 2 + number_of_subdirectories" convention. */
+	if (st_after.st_nlink != st_before.st_nlink - 1 && !Sflag)
+		printf("NOTE: %s: case2 parent nlink %lu -> %lu "
+		       "(traditional Unix expects -1 after rename-replace "
+		       "removed one subdir; POSIX.1-2008 only requires "
+		       "st_nlink >= 1)\n",
+		       myname,
+		       (unsigned long)st_before.st_nlink,
+		       (unsigned long)st_after.st_nlink);
 
 	rmdir(b);
 	rmdir(p);
