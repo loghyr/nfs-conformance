@@ -12,6 +12,42 @@ options, open flags).  Each test is a standalone C program, emits
 TAP13 when `NFS_CONFORMANCE_TAP=1` is set, and exits `0/1/77/99`
 (PASS / FAIL / SKIP / BUG, the GNU automake TESTS convention).
 
+## Charter
+
+The unit under test is the **OS NFS client** as driven through
+**POSIX system calls**.  Every `op_*` test issues real syscalls
+(`open`, `read`, `stat`, `rename`, `fcntl`, `utimensat`, ...) against
+a mount and verifies the observable kernel/client behaviour.  Wire-
+level protocol checks (raw RPC / XDR, server state-machine
+exercises) are out of scope — for that, use
+[`pynfs`](https://git.linux-nfs.org/?p=bfields/pynfs.git).
+
+The single carve-out from "syscalls only" is a small set of
+**second-client probes** (`cb_*_probe`, `server_caps_probe`) that
+exist to induce server-side state (callbacks, capability
+advertisement) that a single syscall-driven client cannot produce
+on its own.  The probes are not tests; they are helpers invoked
+from specific tests and occasionally useful for manual debugging.
+
+Coverage priority, in order:
+
+1. **POSIX file semantics through NFS.**  Does the mount behave
+   like a POSIX filesystem?  `rename` errno paths, atime/mtime
+   cascades, `O_APPEND` atomicity, readdir under mutation, sticky
+   bit, ELOOP, ENAMETOOLONG, fd sharing across fork/dup, ...
+2. **NFS protocol spec compliance** where the syscall surface
+   reaches.  NFSv4.2 extensions (ALLOCATE, COPY, CLONE, SEEK/
+   READ_PLUS, xattr, time_create), NFSv4 baseline ops (RENAME
+   atomicity, OPEN_DOWNGRADE, delegations via CB_RECALL).
+3. **OS client behaviour.**  Mount-option-gated tests (`-o noac`,
+   `-o soft`), platform-specific (`O_DIRECT`, `O_TMPFILE`,
+   `statx(STATX_BTIME)`, root_squash, rsize/wsize boundary I/O).
+
+What this charter excludes, by design: the Connectathon test suite
+(cthon04 — historical comparability only, not our lineage),
+`pynfs` (wire-level), and any test that opens its own TCP session
+to port 2049 to drive the server directly.
+
 ## Scope
 
 Each test drives the op under test via its portable userspace
@@ -80,7 +116,6 @@ Bread-and-butter NFSv4 ops that predate v4.1 but matter for every server, exerci
 | `op_truncate_grow` | SETATTR(size) hole-creating grow (RFC 7530 §5.8.1.5) | `ftruncate(2)` extending | POSIX |
 | `op_unicode_names` | name encoding (RFC 7530 §1.4.2) | `open`/`stat`/`readdir`/`rename` with UTF-8 names | POSIX + UTF-8 locale |
 | `op_readdir_many` | READDIR cookie continuation (RFC 7530 §18.23) | `opendir`/`readdir` over ~1024 entries | POSIX |
-| `op_server_caps` | EXCHANGE_ID / SECINFO_NO_NAME | hand-rolled NFSv4.1 session | Linux + TCP/2049 to server (`-S SERVER` required) |
 | `op_lookup` | LOOKUP (RFC 7530 §18.14) | `stat`, `open`, deep paths | POSIX |
 | `op_lookupp` | LOOKUPP (RFC 7530 §18.15) | `stat("..")`, `openat(dirfd, "..")` | POSIX |
 | `op_lock` | LOCK / LOCKU / LOCKT (RFC 7530 §18.10-12) | `fcntl(F_SETLK / F_GETLK)` | POSIX |
@@ -175,6 +210,22 @@ userspace hook that exercises them:
   EXCHANGE_ID, CREATE_SESSION, referrals**.  Internal state-machine
   ops with no userspace knob.  `op_ofd_lock` is the one v4.1 feature
   with a clean syscall surface.
+
+## Probes (second-client helpers)
+
+Per the charter above, these binaries are not conformance tests
+and are not invoked by `make check`.  They exist to induce server-
+side state that a single syscall-driven client cannot produce.
+
+| Probe | Purpose | Invoked by |
+|---|---|---|
+| `cb_getattr_probe` | Hold a write delegation from a separate client so CB_GETATTR can be exercised | `op_deleg_attr` |
+| `cb_recall_probe` | Hold a delegation then trigger a conflicting OPEN, inducing CB_RECALL | `op_deleg_recall`, `op_deleg_read` (with `-w`) |
+| `server_caps_probe` | Probe NFSv4.1 server capabilities (EXCHANGE_ID, SECINFO_NO_NAME) via a direct TCP/2049 session; useful for manually checking what the server advertises | Manual: `server_caps_probe -S SERVER` |
+
+The `server_caps_probe` is the only binary that goes below the
+syscall layer.  It is a diagnostic, not a conformance assertion;
+the charter would otherwise exclude it.
 
 ## Building
 

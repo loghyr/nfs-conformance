@@ -3,9 +3,10 @@ op_*
 !op_*.c
 !op_*.h
 
-# Helper probe binaries
+# Second-client probe binaries (see README charter)
 cb_getattr_probe
 cb_recall_probe
+server_caps_probe
 
 # Compiler artifacts
 *.o

@@ -65,12 +65,14 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_timestamps op_fd_sharing \
         op_errno_rename op_errno_open op_path_limits op_symlink_loop \
         op_errno_link op_sticky_bit \
-        op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write \
-        op_server_caps
+        op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write
 
-# Auxiliary probe tools (not invoked by `prove`; helpers for a few
-# tests and available for manual debugging).
-PROBES = cb_getattr_probe cb_recall_probe
+# Second-client probes (not invoked by `prove`).  These exist only
+# to induce server-side state that a single syscall-driven client
+# cannot produce on its own: callback operations, session-level
+# capability advertisement, etc.  Per the charter, they are helpers,
+# not conformance tests.
+PROBES = cb_getattr_probe cb_recall_probe server_caps_probe
 
 CHECK_DIR ?= .
 JOBS      ?= 4
@@ -111,9 +113,14 @@ cb_recall_probe: cb_recall_probe.c rpc_wire.h
 op_deleg_attr: op_deleg_attr.c subr.o tests.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -pthread op_deleg_attr.c subr.o -o op_deleg_attr
 
-# op_server_caps pulls in rpc_wire.h directly.
-op_server_caps: op_server_caps.c subr.o tests.h rpc_wire.h
-	$(CC) $(CFLAGS) $(LDFLAGS) op_server_caps.c subr.o -o op_server_caps
+# server_caps_probe is the third second-client probe.  Unlike the
+# cb_* probes it does use subr.o (for prelude / skip / finish when
+# invoked standalone for debugging) plus rpc_wire.h for the direct
+# NFSv4.1 session setup it performs -- per the charter, this is
+# state the syscall client does not expose at the POSIX boundary,
+# so the probe talks to the server directly.
+server_caps_probe: server_caps_probe.c subr.o tests.h rpc_wire.h
+	$(CC) $(CFLAGS) $(LDFLAGS) server_caps_probe.c subr.o -o server_caps_probe
 
 clean:
 	rm -f $(TESTS) $(PROBES) subr.o

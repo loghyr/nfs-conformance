@@ -1,7 +1,7 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
 /* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
 /*
- * op_server_caps.c -- discover and verify NFSv4.1 server capabilities.
+ * server_caps_probe.c -- discover and verify NFSv4.1 server capabilities.
  *
  * Connects directly to the NFS server on TCP port 2049 (without a kernel
  * mount) and exercises two diagnostic COMPOUNDs:
@@ -57,7 +57,7 @@ int Tflag = 0;
 int Fflag = 0;
 int Nflag = 0;
 
-static const char *myname = "op_server_caps";
+static const char *myname = "server_caps_probe";
 
 /* eir_flags bit constants */
 #define EXCHGID4_FLAG_SUPP_MOVED_REFER   0x00000001u
@@ -481,7 +481,7 @@ static void case_exchange_id(const char *server)
 	char owner_id[128];
 	char hostname[64] = "probe";
 	gethostname(hostname, sizeof(hostname) - 1);
-	snprintf(owner_id, sizeof(owner_id), "op_server_caps:%s:%u",
+	snprintf(owner_id, sizeof(owner_id), "server_caps_probe:%s:%u",
 		 hostname, (unsigned)getpid());
 
 	uint32_t xid = (uint32_t)getpid() ^ 0xCA000000u;
@@ -541,7 +541,7 @@ static void case_secinfo(const char *server)
 	char owner_id[128];
 	char hostname[64] = "probe";
 	gethostname(hostname, sizeof(hostname) - 1);
-	snprintf(owner_id, sizeof(owner_id), "op_server_caps_si:%s:%u",
+	snprintf(owner_id, sizeof(owner_id), "server_caps_probe_si:%s:%u",
 		 hostname, (unsigned)getpid());
 
 	uint32_t xid = (uint32_t)getpid() ^ 0xCA010000u;
