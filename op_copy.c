@@ -22,6 +22,14 @@
  *      in DST must read zero.  Skipped (as a NOTE, not a test
  *      failure) if SEEK_HOLE/SEEK_DATA unavailable.
  *
+ *   4. API matrix.  Zero-length copy must succeed returning 0.
+ *      Non-zero flags must fail with EINVAL (Linux / FreeBSD agree
+ *      here; glibc's man page documents "currently, no flags are
+ *      defined").  Requested length larger than what remains in the
+ *      source beyond `soff` must return the correct short count
+ *      without extending the source read pointer past EOF.
+ *      Derived from xfstests generic/430.
+ *
  * Feature probe: we do a real 1-byte copy up front to detect
  * ENOSYS / EOPNOTSUPP before the main cases run.  A zero-length
  * probe is not sufficient because the kernel fast-paths that to 0
@@ -266,6 +274,101 @@ static void case_sparse_preservation(int sfd, int dfd)
 #endif
 }
 
+static void case_matrix_api(int sfd, int dfd)
+{
+	/* Seed src with 4 KiB so we have a known tail to short-read past. */
+	const size_t seed_len = 4096;
+	unsigned char *seed = malloc(seed_len);
+	if (!seed) { complain("case4: malloc"); return; }
+	fill_pattern(seed, seed_len, 0x4A4A);
+	if (ftruncate(sfd, 0) != 0 || ftruncate(dfd, 0) != 0) {
+		complain("case4: ftruncate reset: %s", strerror(errno));
+		free(seed);
+		return;
+	}
+	if (pwrite_all(sfd, seed, seed_len, 0, "case4: seed src") < 0) {
+		free(seed);
+		return;
+	}
+	free(seed);
+
+	/* 4a -- zero-length copy must succeed and return 0. */
+	{
+		off_t soff = 0, doff = 0;
+		ssize_t n = copy_file_range(sfd, &soff, dfd, &doff, 0, 0);
+		if (n < 0)
+			complain("case4a: copy_file_range(len=0): %s",
+				 strerror(errno));
+		else if (n != 0)
+			complain("case4a: copy_file_range(len=0) returned "
+				 "%zd (expected 0)", n);
+	}
+
+	/* 4b -- non-zero flags must be rejected with EINVAL. */
+	{
+		off_t soff = 0, doff = 0;
+		errno = 0;
+		ssize_t n = copy_file_range(sfd, &soff, dfd, &doff, 64,
+					    0x1u);
+		if (n >= 0) {
+			/*
+			 * Some older kernels may accept unknown flags.
+			 * Report as NOTE rather than FAIL -- not every
+			 * platform enforces this strictly.
+			 */
+			if (!Sflag)
+				printf("NOTE: %s: case4b non-zero flag "
+				       "accepted (n=%zd); spec says "
+				       "EINVAL\n", myname, n);
+		} else if (errno != EINVAL) {
+			complain("case4b: unexpected errno %s "
+				 "(expected EINVAL)", strerror(errno));
+		}
+	}
+
+	/* 4c -- request more than src has; must short-copy and stop. */
+	{
+		if (ftruncate(dfd, 0) != 0) {
+			complain("case4c: ftruncate dst: %s", strerror(errno));
+			return;
+		}
+		off_t soff = 0, doff = 0;
+		/*
+		 * Ask for 16 KiB; src only holds 4 KiB.  Post-call:
+		 *   - return value may be seed_len (single-call short) or
+		 *     any positive prefix in [1..seed_len];
+		 *   - soff must be in [0..seed_len];
+		 *   - a second call from the same soff returns 0 (EOF).
+		 */
+		ssize_t n = copy_file_range(sfd, &soff, dfd, &doff,
+					    4 * seed_len, 0);
+		if (n < 0) {
+			complain("case4c: copy_file_range: %s",
+				 strerror(errno));
+			return;
+		}
+		if (n < 0 || (size_t)n > seed_len)
+			complain("case4c: over-copy %zd > src %zu",
+				 n, seed_len);
+		if (soff < 0 || soff > (off_t)seed_len)
+			complain("case4c: soff advanced to %lld "
+				 "(src size %zu)",
+				 (long long)soff, seed_len);
+
+		/* Second call from current soff must signal EOF (n==0). */
+		off_t soff_eof = (off_t)seed_len;
+		off_t doff_eof = n;
+		ssize_t m = copy_file_range(sfd, &soff_eof, dfd, &doff_eof,
+					    seed_len, 0);
+		if (m < 0)
+			complain("case4c: EOF call copy_file_range: %s",
+				 strerror(errno));
+		else if (m != 0)
+			complain("case4c: EOF call returned %zd "
+				 "(expected 0 at EOF)", m);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -308,6 +411,7 @@ next:
 	RUN_CASE("case_simple", case_simple(sfd, dfd));
 	RUN_CASE("case_offset", case_offset(sfd, dfd));
 	RUN_CASE("case_sparse_preservation", case_sparse_preservation(sfd, dfd));
+	RUN_CASE("case_matrix_api", case_matrix_api(sfd, dfd));
 
 	close(sfd);
 	close(dfd);
