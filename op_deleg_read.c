@@ -71,7 +71,7 @@ static const char *myname = "op_deleg_read";
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: %s [-hstfn] [-d DIR] [-s SERVER] [-P NFSPATH_PREFIX]\n"
+		"usage: %s [-hstfn] [-d DIR] [-S SERVER] [-P NFSPATH_PREFIX]\n"
 		"  exercise read delegation and recall (RFC 7530 S10.4.2)\n"
 		"  -h help  -s silent  -t timing  -f function-only\n"
 		"  -n no mkdir  -d DIR  (default cwd)\n"
