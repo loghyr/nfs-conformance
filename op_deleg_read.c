@@ -37,8 +37,25 @@
  *      unchanged on the wire (the probe issues OPEN + CLOSE without
  *      any WRITE).
  *
- * Cases 2 and 3 require cb_recall_probe to be in PATH.  If missing,
- * they emit a NOTE and skip only those cases; case 1 still runs.
+ *   4. Clean close after recall (requires -S).  Open O_RDONLY, run
+ *      the write probe to force a recall, then close().  close()
+ *      must return 0.  Catches clients that leave the fd in a
+ *      stuck state (ESTALE / EIO / EBADF on close) after a
+ *      delegation was returned under pressure -- a real bug class
+ *      in older NFS clients.
+ *
+ *   5. Self-write is visible through the read-deleg holder.  Open
+ *      O_RDONLY (may acquire a read deleg), pread to prime state,
+ *      then open the SAME file O_WRONLY in this process and
+ *      pwrite a new pattern, fsync, close the write fd.  A fresh
+ *      pread on the original O_RDONLY fd must see the new pattern.
+ *      The client's own write must invalidate its own read deleg
+ *      (or the deleg must never have been granted); if the read
+ *      fd stays in a stale cached view, the self-coherence contract
+ *      is broken.  Runs locally; no probe needed.
+ *
+ * Cases 2, 3 and 4 require cb_recall_probe to be in PATH.  If missing,
+ * they emit a NOTE and skip only those cases; cases 1 and 5 still run.
  *
  * Portable: same constraints as op_deleg_recall -- Linux NFS client
  * with read-delegation support.  On servers that never grant read
@@ -353,6 +370,167 @@ static void case_recall_by_write(const char *server, const char *nfs_dir)
 	unlink(f);
 }
 
+/* case 4 ---------------------------------------------------------------- */
+
+static void case_clean_close_after_recall(const char *server,
+					  const char *nfs_dir)
+{
+	char f[64];
+	char probe_path[256];
+	snprintf(f, sizeof(f), "t_dr.cc.%ld", (long)getpid());
+	unlink(f);
+
+	int plen;
+	if (nfs_dir && nfs_dir[0] != '\0')
+		plen = snprintf(probe_path, sizeof(probe_path), "%s/%s",
+				nfs_dir, f);
+	else
+		plen = snprintf(probe_path, sizeof(probe_path), "%s", f);
+	if (plen < 0 || (size_t)plen >= sizeof(probe_path)) {
+		complain("case4: NFS path prefix too long (>%zu chars)",
+			 sizeof(probe_path) - 1);
+		return;
+	}
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case4: open: %s", strerror(errno));
+		return;
+	}
+	unsigned char wbuf[4096];
+	fill_pattern(wbuf, sizeof(wbuf), 43);
+	if (pwrite_all(fd, wbuf, sizeof(wbuf), 0, "case4: pwrite") != 0) {
+		close(fd); unlink(f); return;
+	}
+	if (close(fd) < 0) {
+		complain("case4: close after seed: %s", strerror(errno));
+		unlink(f); return;
+	}
+
+	fd = open(f, O_RDONLY);
+	if (fd < 0) {
+		complain("case4: reopen O_RDONLY: %s", strerror(errno));
+		unlink(f); return;
+	}
+	/* Prime the cache with a read before the recall. */
+	unsigned char pre[4096];
+	if (pread_all(fd, pre, sizeof(pre), 0,
+		      "case4: pread before probe") != 0) {
+		close(fd); unlink(f); return;
+	}
+
+	int rc = run_probe(server, probe_path, 1 /* write */);
+	if (rc == 77) {
+		fprintf(stderr,
+			"NOTE: case4: cb_recall_probe not in PATH\n");
+		close(fd); unlink(f); return;
+	}
+	if (rc != 0) {
+		close(fd); unlink(f); return;
+	}
+
+	/*
+	 * Close the holder AFTER the recall.  On well-behaved clients
+	 * this is a clean close(2) == 0.  On buggy clients that leave
+	 * the fd in a half-recalled state, close can return ESTALE,
+	 * EIO, or EBADF.  That is the failure we want to surface.
+	 */
+	errno = 0;
+	if (close(fd) != 0) {
+		complain("case4: close after recall returned %s "
+			 "(fd stuck in half-recalled state -- client bug)",
+			 strerror(errno));
+	}
+	unlink(f);
+}
+
+/* case 5 ---------------------------------------------------------------- */
+
+static void case_self_write_visible_through_read_holder(void)
+{
+	char f[64];
+	snprintf(f, sizeof(f), "t_dr.sw.%ld", (long)getpid());
+	unlink(f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case5: open: %s", strerror(errno));
+		return;
+	}
+	unsigned char a[4096], b[4096];
+	fill_pattern(a, sizeof(a), 44);
+	fill_pattern(b, sizeof(b), 45);
+	if (pwrite_all(fd, a, sizeof(a), 0, "case5: seed A") != 0) {
+		close(fd); unlink(f); return;
+	}
+	if (close(fd) < 0) {
+		complain("case5: close after seed: %s", strerror(errno));
+		unlink(f); return;
+	}
+
+	/*
+	 * Holder: O_RDONLY.  The client may request a read deleg here.
+	 * Prime a read so any cached state is populated.
+	 */
+	int rfd = open(f, O_RDONLY);
+	if (rfd < 0) {
+		complain("case5: open holder: %s", strerror(errno));
+		unlink(f); return;
+	}
+	unsigned char first[4096];
+	if (pread_all(rfd, first, sizeof(first), 0,
+		      "case5: prime read") != 0) {
+		close(rfd); unlink(f); return;
+	}
+	if (check_pattern(first, sizeof(first), 44) != 0) {
+		complain("case5: prime read saw wrong pattern (expected A)");
+		close(rfd); unlink(f); return;
+	}
+
+	/*
+	 * Self-write on a SECOND fd in the same process.  A correctly-
+	 * behaving client must invalidate its own read delegation (or
+	 * the delegation was never granted) so the holder's subsequent
+	 * pread sees the new pattern.
+	 */
+	int wfd = open(f, O_WRONLY);
+	if (wfd < 0) {
+		complain("case5: open writer: %s", strerror(errno));
+		close(rfd); unlink(f); return;
+	}
+	if (pwrite_all(wfd, b, sizeof(b), 0, "case5: self-write B") != 0) {
+		close(wfd); close(rfd); unlink(f); return;
+	}
+	if (fsync(wfd) != 0) {
+		complain("case5: fsync writer: %s", strerror(errno));
+		close(wfd); close(rfd); unlink(f); return;
+	}
+	if (close(wfd) < 0) {
+		complain("case5: close writer: %s", strerror(errno));
+		close(rfd); unlink(f); return;
+	}
+
+	/*
+	 * Fresh pread on the holder.  Must see pattern B.  If it still
+	 * sees pattern A, the client held a read deleg that its own
+	 * write did not invalidate -- self-coherence broken.
+	 */
+	unsigned char after[4096];
+	if (pread_all(rfd, after, sizeof(after), 0,
+		      "case5: read after self-write") != 0) {
+		close(rfd); unlink(f); return;
+	}
+	size_t off = check_pattern(after, sizeof(after), 45);
+	if (off != 0)
+		complain("case5: read holder saw pattern A at byte %zu "
+			 "after self-write of pattern B "
+			 "(read delegation not invalidated by own write)",
+			 off - 1);
+
+	close(rfd);
+	unlink(f);
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir      = ".";
@@ -405,10 +583,14 @@ next:
 			 case_shared_read(server, nfs_dir));
 		RUN_CASE("case_recall_by_write",
 			 case_recall_by_write(server, nfs_dir));
+		RUN_CASE("case_clean_close_after_recall",
+			 case_clean_close_after_recall(server, nfs_dir));
 	} else if (!Sflag) {
 		printf("NOTE: %s: -S SERVER not provided; skipping "
-		       "cross-client cases 2 and 3\n", myname);
+		       "cross-client cases 2, 3, 4\n", myname);
 	}
+	RUN_CASE("case_self_write_visible_through_read_holder",
+		 case_self_write_visible_through_read_holder());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
