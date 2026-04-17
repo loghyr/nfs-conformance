@@ -273,6 +273,86 @@ static void case_tail_hole(void)
 	unlink(f);
 }
 
+/*
+ * case 6 -- alternating hole/data stripes.
+ *
+ * Writes 16 × 4 KiB data stripes at every other 4 KiB offset, giving
+ * a file whose extent list is:
+ *    [data 0..4k) [hole 4k..8k) [data 8k..12k) [hole 12k..16k) ...
+ *
+ * Reads the entire 128 KiB range in one pread and verifies the
+ * pattern byte-for-byte.  This exercises multi-extent REPLY stitching
+ * on the server -- a single READ_PLUS reply can carry many content-
+ * type alternations, and servers that get the extent-run length
+ * wrong corrupt bytes at the boundaries.
+ */
+static void case_alternating_stripes(void)
+{
+	char f[64];
+	snprintf(f, sizeof(f), "t_rp.as.%ld", (long)getpid());
+	unlink(f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case6: open: %s", strerror(errno));
+		return;
+	}
+
+#define STRIPE_SZ 4096u
+	const int n_data = 16;                 /* 16 data stripes, 16 holes */
+	const size_t total = (size_t)(n_data * 2) * STRIPE_SZ;
+
+	unsigned char stripe_buf[STRIPE_SZ];
+	for (int i = 0; i < n_data; i++) {
+		fill_pattern(stripe_buf, STRIPE_SZ, (unsigned)(0x100 + i));
+		off_t off = (off_t)(i * 2) * STRIPE_SZ;
+		char ctx[48];
+		snprintf(ctx, sizeof(ctx), "case6: pwrite stripe %d", i);
+		if (pwrite_all(fd, stripe_buf, STRIPE_SZ, off, ctx) != 0) {
+			close(fd); unlink(f); return;
+		}
+	}
+	if (ftruncate(fd, (off_t)total) != 0) {
+		complain("case6: ftruncate: %s", strerror(errno));
+		close(fd); unlink(f); return;
+	}
+
+	unsigned char *big = malloc(total);
+	if (!big) {
+		complain("case6: malloc %zu", total);
+		close(fd); unlink(f); return;
+	}
+	if (pread_all(fd, big, total, 0, "case6: pread all") != 0) {
+		free(big); close(fd); unlink(f); return;
+	}
+
+	/* Verify: stripe i at offset (2i)*stripe matches pattern(0x100+i);
+	 * hole stripe at (2i+1)*stripe is all zero. */
+	for (int i = 0; i < n_data; i++) {
+		size_t data_off = (size_t)(i * 2) * STRIPE_SZ;
+		size_t miss = check_pattern(big + data_off, STRIPE_SZ,
+					    (unsigned)(0x100 + i));
+		if (miss) {
+			complain("case6: data stripe %d corrupt at byte %zu "
+				 "(multi-extent stitch lost data)",
+				 i, miss - 1);
+			goto done;
+		}
+		size_t hole_off = (size_t)(i * 2 + 1) * STRIPE_SZ;
+		if (!all_zero(big + hole_off, STRIPE_SZ)) {
+			complain("case6: hole stripe %d nonzero "
+				 "(multi-extent stitch leaked data into hole)",
+				 i);
+			goto done;
+		}
+	}
+
+done:
+	free(big);
+	close(fd);
+	unlink(f);
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -311,6 +391,7 @@ next:
 	RUN_CASE("case_giant_hole", case_giant_hole());
 	RUN_CASE("case_cross_boundary", case_cross_boundary());
 	RUN_CASE("case_pure_hole", case_pure_hole());
+	RUN_CASE("case_alternating_stripes", case_alternating_stripes());
 	RUN_CASE("case_tail_hole", case_tail_hole());
 
 	if (Tflag) {
