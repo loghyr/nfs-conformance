@@ -19,9 +19,22 @@
  *      must remain unchanged.  This is the critical property that
  *      distinguishes a reflink from a hard link.
  *
- * Range-partial clone (FICLONERANGE) is out of scope for this file
- * per the one-concern-per-test convention; if added it goes in a
- * separate op_clone_range.
+ *   3. Clone + truncate src.  Clone, truncate SRC to 0, verify DST
+ *      still has the full pre-clone content.  Catches backends that
+ *      implement CLONE as a delayed-copy optimisation and lose the
+ *      shared blocks when the "original" holder shrinks.
+ *
+ *   4. Clone + unlink src.  Clone, close + unlink SRC, verify DST
+ *      is still readable and byte-for-byte identical to the pre-
+ *      unlink content.  A refcount-per-extent implementation must
+ *      keep the shared blocks alive for DST; a buggy one may drop
+ *      them when SRC's inode is removed.
+ *
+ *   5. Partial range clone (FICLONERANGE).  Clone a middle byte
+ *      range from SRC into DST; bytes outside the cloned range in
+ *      DST must remain untouched.  Exercises the range-addressed
+ *      variant that FICLONE (whole-file) does not.  Derived from
+ *      the clone matrix in xfstests generic/110-149.
  */
 
 #define _GNU_SOURCE
@@ -53,7 +66,7 @@ int main(void)
 #else
 
 #include <sys/ioctl.h>
-#include <linux/fs.h> /* FICLONE */
+#include <linux/fs.h> /* FICLONE, FICLONERANGE, struct file_clone_range */
 
 #ifndef FICLONE
 int main(void)
@@ -214,6 +227,242 @@ static void case_cow_semantics(int sfd, int dfd)
 	free(buf);
 }
 
+static void case_clone_then_truncate_src(int sfd, int dfd)
+{
+	if (ftruncate(sfd, 0) != 0 || ftruncate(dfd, 0) != 0) {
+		complain("case3: ftruncate reset: %s", strerror(errno));
+		return;
+	}
+	unsigned char *buf = malloc(FILE_LEN);
+	if (!buf) { complain("case3: malloc"); return; }
+	fill_pattern(buf, FILE_LEN, 0xC103);
+	if (pwrite_all(sfd, buf, FILE_LEN, 0, "case3:src") < 0) {
+		free(buf);
+		return;
+	}
+	fdatasync(sfd);
+
+	if (do_ficlone(dfd, sfd) != 0) {
+		complain("case3: ficlone: %s", strerror(errno));
+		free(buf);
+		return;
+	}
+
+	/* Now shrink src to nothing.  A well-behaved CoW backend keeps
+	 * the shared extents alive for dst; a delayed-copy backend that
+	 * treats src as the canonical holder may lose them. */
+	if (ftruncate(sfd, 0) != 0) {
+		complain("case3: truncate src: %s", strerror(errno));
+		free(buf);
+		return;
+	}
+	fdatasync(sfd);
+
+	struct stat dst_st;
+	if (fstat(dfd, &dst_st) != 0) {
+		complain("case3: fstat dst: %s", strerror(errno));
+		free(buf);
+		return;
+	}
+	if (dst_st.st_size != FILE_LEN) {
+		complain("case3: dst size %lld != %d after truncating src "
+			 "(shared extents lost when src shrank)",
+			 (long long)dst_st.st_size, FILE_LEN);
+		free(buf);
+		return;
+	}
+
+	unsigned char *rb = malloc(FILE_LEN);
+	if (!rb) {
+		complain("case3: malloc rb");
+	} else if (pread_all(dfd, rb, FILE_LEN, 0,
+			     "case3:verify dst") == 0) {
+		size_t miss = check_pattern(rb, FILE_LEN, 0xC103);
+		if (miss)
+			complain("case3: dst mismatch at byte %zu after "
+				 "truncating src (CoW retention broken)",
+				 miss - 1);
+	}
+	free(rb);
+	free(buf);
+}
+
+static void case_clone_then_unlink_src(void)
+{
+	/*
+	 * This case uses private scratch files (not main's sfd/dfd)
+	 * because it unlinks the source and closes its fd -- we don't
+	 * want to interfere with other cases that follow.
+	 */
+	char lsname[64], ldname[64];
+	snprintf(lsname, sizeof(lsname), "t15.src.u.%ld", (long)getpid());
+	snprintf(ldname, sizeof(ldname), "t15.dst.u.%ld", (long)getpid());
+	unlink(lsname);
+	unlink(ldname);
+
+	int lsfd = open(lsname, O_RDWR | O_CREAT, 0644);
+	int ldfd = open(ldname, O_RDWR | O_CREAT, 0644);
+	if (lsfd < 0 || ldfd < 0) {
+		complain("case4: open scratch: %s", strerror(errno));
+		if (lsfd >= 0) close(lsfd);
+		if (ldfd >= 0) close(ldfd);
+		unlink(lsname);
+		unlink(ldname);
+		return;
+	}
+
+	unsigned char *buf = malloc(FILE_LEN);
+	if (!buf) {
+		complain("case4: malloc");
+		close(lsfd); close(ldfd);
+		unlink(lsname); unlink(ldname);
+		return;
+	}
+	fill_pattern(buf, FILE_LEN, 0xC104);
+	if (pwrite_all(lsfd, buf, FILE_LEN, 0, "case4:src") < 0) {
+		close(lsfd); close(ldfd);
+		unlink(lsname); unlink(ldname);
+		free(buf);
+		return;
+	}
+	fdatasync(lsfd);
+
+	if (do_ficlone(ldfd, lsfd) != 0) {
+		complain("case4: ficlone: %s", strerror(errno));
+		close(lsfd); close(ldfd);
+		unlink(lsname); unlink(ldname);
+		free(buf);
+		return;
+	}
+
+	/* Drop the source: close fd then unlink the name. */
+	close(lsfd);
+	if (unlink(lsname) != 0) {
+		complain("case4: unlink src: %s", strerror(errno));
+		close(ldfd);
+		unlink(ldname);
+		free(buf);
+		return;
+	}
+
+	/* Verify dst still holds the pre-unlink content. */
+	unsigned char *rb = malloc(FILE_LEN);
+	if (!rb) {
+		complain("case4: malloc rb");
+	} else if (pread_all(ldfd, rb, FILE_LEN, 0,
+			     "case4:verify dst") == 0) {
+		size_t miss = check_pattern(rb, FILE_LEN, 0xC104);
+		if (miss)
+			complain("case4: dst mismatch at byte %zu after "
+				 "unlinking src (shared extents dropped "
+				 "when src inode was removed)",
+				 miss - 1);
+	}
+	free(rb);
+	free(buf);
+
+	close(ldfd);
+	unlink(ldname);
+}
+
+static void case_clone_partial_range(int sfd, int dfd)
+{
+#ifndef FICLONERANGE
+	if (!Sflag)
+		printf("NOTE: %s: case5 FICLONERANGE unavailable, "
+		       "skipping partial-range clone\n", myname);
+	(void)sfd; (void)dfd;
+#else
+	if (ftruncate(sfd, 0) != 0 || ftruncate(dfd, 0) != 0) {
+		complain("case5: ftruncate reset: %s", strerror(errno));
+		return;
+	}
+
+	/* src = pattern A over the full range; dst = pattern B. */
+	unsigned char *src_buf = malloc(FILE_LEN);
+	unsigned char *dst_buf = malloc(FILE_LEN);
+	if (!src_buf || !dst_buf) {
+		complain("case5: malloc");
+		free(src_buf); free(dst_buf);
+		return;
+	}
+	fill_pattern(src_buf, FILE_LEN, 0xC105);
+	fill_pattern(dst_buf, FILE_LEN, 0xD105);
+	if (pwrite_all(sfd, src_buf, FILE_LEN, 0, "case5:src") < 0
+	    || pwrite_all(dfd, dst_buf, FILE_LEN, 0, "case5:dst") < 0) {
+		free(src_buf); free(dst_buf);
+		return;
+	}
+	fdatasync(sfd);
+	fdatasync(dfd);
+
+	/*
+	 * Clone the middle 256 KiB from src to dst at the same offset.
+	 * Ranges must be block-aligned on most backends; 256 KiB at
+	 * offset 256 KiB satisfies 4 KiB / 64 KiB / 128 KiB alignments
+	 * comfortably.
+	 */
+	struct file_clone_range fcr = {
+		.src_fd     = sfd,
+		.src_offset = FILE_LEN / 4,
+		.src_length = FILE_LEN / 2,
+		.dest_offset = FILE_LEN / 4,
+	};
+	if (ioctl(dfd, FICLONERANGE, &fcr) != 0) {
+		if (errno == EOPNOTSUPP || errno == EINVAL) {
+			if (!Sflag)
+				printf("NOTE: %s: case5 FICLONERANGE %s "
+				       "(backend may require different "
+				       "alignment) - skipping\n",
+				       myname, strerror(errno));
+			free(src_buf); free(dst_buf);
+			return;
+		}
+		complain("case5: FICLONERANGE: %s", strerror(errno));
+		free(src_buf); free(dst_buf);
+		return;
+	}
+
+	/* Read dst back; compare. */
+	unsigned char *rb = malloc(FILE_LEN);
+	if (!rb) {
+		complain("case5: malloc rb");
+		free(src_buf); free(dst_buf);
+		return;
+	}
+	if (pread_all(dfd, rb, FILE_LEN, 0,
+		      "case5:verify dst") != 0) {
+		free(src_buf); free(dst_buf); free(rb);
+		return;
+	}
+
+	/* dst[0..FILE_LEN/4) must still be pattern B. */
+	if (memcmp(rb, dst_buf, FILE_LEN / 4) != 0)
+		complain("case5: dst head [0..%d) altered by "
+			 "FICLONERANGE on middle range "
+			 "(clone leaked past requested offset)",
+			 FILE_LEN / 4);
+
+	/* dst[FILE_LEN/4..3*FILE_LEN/4) must now match pattern A. */
+	if (memcmp(rb + FILE_LEN / 4,
+		   src_buf + FILE_LEN / 4,
+		   FILE_LEN / 2) != 0)
+		complain("case5: dst middle did not take on src pattern "
+			 "after FICLONERANGE");
+
+	/* dst[3*FILE_LEN/4..FILE_LEN) must still be pattern B. */
+	if (memcmp(rb + 3 * FILE_LEN / 4,
+		   dst_buf + 3 * FILE_LEN / 4,
+		   FILE_LEN / 4) != 0)
+		complain("case5: dst tail altered by FICLONERANGE on "
+			 "middle range (clone leaked past requested length)");
+
+	free(rb);
+	free(src_buf);
+	free(dst_buf);
+#endif
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -255,6 +504,12 @@ next:
 
 	RUN_CASE("case_basic_clone", case_basic_clone(sfd, dfd));
 	RUN_CASE("case_cow_semantics", case_cow_semantics(sfd, dfd));
+	RUN_CASE("case_clone_then_truncate_src",
+		 case_clone_then_truncate_src(sfd, dfd));
+	RUN_CASE("case_clone_then_unlink_src",
+		 case_clone_then_unlink_src());
+	RUN_CASE("case_clone_partial_range",
+		 case_clone_partial_range(sfd, dfd));
 
 	close(sfd);
 	close(dfd);
