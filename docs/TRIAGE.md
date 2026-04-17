@@ -644,7 +644,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 | Signature | Likely cause | Diagnose |
 |---|---|---|
-| `readdir skipped N extant entries after mid-iteration deletions` | Client directory cookie invalidation broken — entries lost from view after an unrelated delete. | Server-side cookie-stability issue, or client cookie-cache eviction bug. |
+| `readdir skipped N extant entries after mid-iteration deletions` | Server changed the READDIR cookieverf on directory modification, causing the Linux NFS client to restart the iteration; the client then silently skips entries it already returned to userspace. Confirmed on reffs (passes against Linux knfsd). | Server-side: stabilise cookies across deletions, or avoid bumping cookieverf on remove-only mutations (entries can only shrink, existing cookies remain valid). |
 | `rewinddir showed deleted entry (stale snapshot across rewinddir)` | Client cached directory snapshot at open time and didn't refresh on rewinddir. | Client bug. |
 | `rewinddir missed N of M newly-added entries` | Same class. | Same. |
 | `NOTE: seekdir revisited N already-consumed entries after mid-stream delete` | Informational only — NFS cookie-stability semantic varies by server; pro-LIT spec-permitted. | None. |
@@ -677,11 +677,14 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | Signature | Likely cause | Diagnose |
 |---|---|---|
 | `case1: mtime did not advance after write` | Server didn't stamp mtime on WRITE, OR client's attrcache is stale. | Check mount options for `nodiratime`/`noatime`; check server's SETATTR on WRITE path. |
-| `case3: ctime did not advance after chmod` | Server's chmod path doesn't update ctime. | Real conformance bug. |
+| `case3: ctime did not advance after chmod` | Server's chmod path doesn't update ctime on SETATTR(mode). Confirmed on reffs. | Real conformance bug: SETATTR must update ctime. |
+| `case4: ctime did not advance after chown` | Server's chown path doesn't update ctime on SETATTR(owner/group). Confirmed on reffs. | Real conformance bug: SETATTR must update ctime even for a no-op self-chown that the server accepts. |
 | `case8: mtime nsec truncated to 0` (NOTE) | Server has second-granularity timestamps. | Known on many filesystems; informational. |
 | `NOTE: case2 atime did not advance after read — mount is likely noatime/relatime/nodiratime` | Expected on mount-option-tuned systems. | None. |
 
 **False positives**: `atime` advancement is frequently disabled by mount options; that's a NOTE.
+
+**Note on 20 ms delay (cases 3, 4)**: The test sleeps 20 ms between create and chmod/chown. On servers with 1-second timestamp resolution this delay is insufficient to guarantee ctime crosses a second boundary; the test would be flaky even if the server does update ctime. If the failures are consistent (not flaky), the server is not updating ctime at all — a harder bug. Confirmed consistent failures on reffs (passes against Linux knfsd).
 
 **Environmental gates**: None.
 
