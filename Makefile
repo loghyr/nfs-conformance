@@ -68,7 +68,7 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_read_write op_zero_to_hole op_writev op_concurrent_writes \
         op_overwrite op_aio_races \
         op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write \
-        op_fallocate_zero_range
+        op_fallocate_zero_range op_deleg_setdeleg
 
 # Second-client probes (not invoked by `prove`).  These exist only
 # to induce server-side state that a single syscall-driven client
