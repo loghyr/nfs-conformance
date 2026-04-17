@@ -500,7 +500,10 @@ static void case_append_trunc(void)
 	}
 
 	struct stat st;
-	fstat(fd, &st);
+	if (fstat(fd, &st) != 0) {
+		complain("case6: fstat after trunc: %s", strerror(errno));
+		close(fd); unlink(name); return;
+	}
 	if (st.st_size != 0)
 		complain("case6: size after O_TRUNC: %lld (expected 0)",
 			 (long long)st.st_size);
@@ -515,7 +518,10 @@ static void case_append_trunc(void)
 	}
 	close(fd);
 
-	stat(name, &st);
+	if (stat(name, &st) != 0) {
+		complain("case6: final stat: %s", strerror(errno));
+		unlink(name); return;
+	}
 	if (st.st_size != (off_t)sizeof(data))
 		complain("case6: final size %lld, expected %zu",
 			 (long long)st.st_size, sizeof(data));

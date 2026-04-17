@@ -353,7 +353,11 @@ static void case_rename_ctime(void)
 	}
 
 	struct stat st1;
-	stat(b, &st1);
+	if (stat(b, &st1) != 0) {
+		complain("case7: stat after rename: %s", strerror(errno));
+		unlink(b);
+		return;
+	}
 	if (!ts_gt(ST_CTIM(st1), ST_CTIM(st0)))
 		complain("case7: ctime did not advance after rename");
 
