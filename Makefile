@@ -64,6 +64,7 @@ TESTS = op_allocate op_io_advise op_seek op_copy op_deallocate op_clone \
         op_readdir_mutation op_rename_open_target op_lock_posix \
         op_timestamps op_fd_sharing \
         op_errno_rename op_errno_open op_path_limits op_symlink_loop \
+        op_errno_link \
         op_deleg_attr op_deleg_recall op_deleg_read op_delegation_write \
         op_server_caps
 
