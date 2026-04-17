@@ -96,7 +96,31 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 - [op_chmod_chown](#op_chmod_chown)
 - [op_seek](#op_seek)
 - [op_allocate](#op_allocate)
-- [Remaining tests (summary)](#remaining-tests)
+- [op_access](#op_access)
+- [op_at_variants](#op_at_variants)
+- [op_change_attr](#op_change_attr)
+- [op_deallocate](#op_deallocate)
+- [op_directory](#op_directory)
+- [op_fd_sharing](#op_fd_sharing)
+- [op_fdopendir](#op_fdopendir)
+- [op_io_advise](#op_io_advise)
+- [op_linkat](#op_linkat)
+- [op_lookup](#op_lookup)
+- [op_lookupp](#op_lookupp)
+- [op_mkdir](#op_mkdir)
+- [op_rmdir](#op_rmdir)
+- [op_mknod_fifo](#op_mknod_fifo)
+- [op_open_downgrade](#op_open_downgrade)
+- [op_open_excl](#op_open_excl)
+- [op_owner_override](#op_owner_override)
+- [op_readdir](#op_readdir)
+- [op_rename_self](#op_rename_self)
+- [op_setattr](#op_setattr)
+- [op_statx_btime](#op_statx_btime)
+- [op_symlink](#op_symlink)
+- [op_tmpfile](#op_tmpfile)
+- [op_utimensat](#op_utimensat)
+- [op_xattr](#op_xattr)
 
 ---
 
@@ -996,37 +1020,434 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 ---
 
-### <a id="remaining-tests"></a>Remaining tests
+### <a id="op_access"></a>op_access
 
-The following tests are thinner triage candidates — most either assert a single POSIX contract that's hard to get wrong, or mirror another triaged test. Refer to each test's `.c` file header for the full assertion matrix.
+**Tier**: POSIX (access / faccessat)
 
-- `op_access` — POSIX access(2) / faccessat. Errno mismatches point at client errno mapping.
-- `op_at_variants` — `*at()` family with dirfds. Failures usually indicate dirfd handling bugs.
-- `op_change_attr` — statx(STATX_CHANGE_COOKIE). Reports server's NFSv4 change attr.
-- `op_deallocate` — FALLOC_FL_PUNCH_HOLE → DEALLOCATE. Linux only.
-- `op_directory` — O_DIRECTORY flag.
-- `op_fd_sharing` — dup/dup2/fork fd offset semantics.
-- `op_fdopendir` — fdopendir on NFS dirfds.
-- `op_io_advise` — posix_fadvise → IO_ADVISE.
-- `op_linkat` — link/linkat syscall paths.
-- `op_lookup` / `op_lookupp` — LOOKUP / LOOKUPP ops via stat paths.
-- `op_mkdir` / `op_rmdir` — directory create/remove.
-- `op_mknod_fifo` — mkfifo (NF4FIFO via CREATE).
-- `op_open_downgrade` — NFSv4 OPEN_DOWNGRADE via fd close sequence.
-- `op_open_excl` — O_CREAT|O_EXCL exclusive create.
-- `op_owner_override` — Linux owner-override semantics (-P/-L modes).
-- `op_read_plus_sparse` — see dedicated section above.
-- `op_readdir` — basic readdir round-trip.
-- `op_rename_self` — rename of hardlinks to same inode (POSIX.1-2024).
-- `op_server_caps` — **probe**, not a test (see § 3).
-- `op_setattr` — SETATTR umbrella (chmod/chown/truncate/utimensat).
-- `op_statx_btime` — statx(STATX_BTIME) / st_birthtimespec.
-- `op_symlink` — basic symlink + readlink.
-- `op_tmpfile` — Linux O_TMPFILE unnamed-create. Skips if server doesn't support.
-- `op_utimensat` — utimensat + UTIME_NOW / UTIME_OMIT / nsec.
-- `op_xattr` — user.* xattr round-trip (Linux).
+**Asserts**: `access(2)` and `faccessat(2)` return 0 for permitted modes, -1/ENOENT for missing files, -1/EACCES for denied modes.
 
-If a failure in any of these tests is surprising and the test's `.c` header doesn't explain it, open an issue and we'll upgrade its triage entry.
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `access(%s, F_OK): %s` | F_OK on an existing file failed. Basic lookup broken. | Check with `stat`; inspect client dcache. |
+| `case2: expected ENOENT, got %s` | access() on missing file returned wrong errno. | Client-side errno mapping. |
+| `access(W_OK) on 0444 unexpectedly` / `NOTE: case4 W_OK on 0444 succeeded` | POSIX says non-root W_OK on read-only mode fails EACCES; some systems (Linux with CAP_DAC_OVERRIDE, running as root) allow. NOTE only when running as root. | Expected when effective uid is 0. |
+
+**Environmental gates**: Running as root widens access checks — cases 4 and beyond report NOTE.
+
+---
+
+### <a id="op_at_variants"></a>op_at_variants
+
+**Tier**: POSIX.1-2008 (`*at()` family with real dirfds)
+
+**Asserts**: `openat`, `mkdirat`, `mknodat`, `fchmodat`, `fchownat`, `renameat`, `unlinkat` operate relative to a directory fd correctly, including when paths traverse NFS directory handles.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `openat: %s` / `mkdirat: %s` / etc. | Operation via dirfd failed. Could be stale dirfd or server doesn't handle the equivalent LOOKUP-via-handle path. | Verify with non-at variant. |
+| `fstatat after openat: mode not regular file` | openat created a non-regular-file object; server CREATE op mis-typed. | Real server bug. |
+| `fchownat: %s` (not EINVAL-idmap) | ownership update via dirfd failed. | Check idmap behavior (same NOTE path as op_chmod_chown). |
+
+**Environmental gates**: POSIX.1-2008. Linux idmap NOTE applies to fchownat case.
+
+---
+
+### <a id="op_change_attr"></a>op_change_attr
+
+**Tier**: SPEC (NFSv4 change attribute, RFC 7530 §5.8.1.4; Linux statx STATX_CHANGE_COOKIE)
+
+**Asserts**: Every metadata- or data-modifying operation advances the change attribute. Clients (and applications like rsync) rely on this for caching.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `change cookie did not advance across %s` | Operation didn't bump the server's change attribute. Real conformance bug. | Look at server's change-attribute implementation; knfsd vs Ganesha vs vendor. |
+| `STATX_CHANGE_COOKIE not defined in this glibc/kernel header set` | Build-time guard; requires Linux 6.5+ headers. SKIPs. | Upgrade kernel headers. |
+
+**Environmental gates**: Linux 6.5+ for STATX_CHANGE_COOKIE. SKIPs otherwise.
+
+---
+
+### <a id="op_deallocate"></a>op_deallocate
+
+**Tier**: SPEC (NFSv4.2 DEALLOCATE, RFC 7862 §10)
+
+**Asserts**: `fallocate(FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE)` punches a hole in an existing file. Size unchanged, `st_blocks` may drop, reads from the hole return zeros.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `punch: %s` | Client or server rejects PUNCH_HOLE. EOPNOTSUPP is common — server backend doesn't support it. | Check server backend type. |
+| `size changed across PUNCH_HOLE` | PUNCH_HOLE must not change file size (with KEEP_SIZE). If it did, server misimplemented the op. | Real bug. |
+| `st_blocks grew across PUNCH_HOLE` | Hole punch shouldn't add blocks. | Server side — possibly server emulated PUNCH_HOLE with write-of-zeros. |
+| `hole region post-punch not zero` | Read after punch returned non-zero bytes. | Real bug. |
+
+**Environmental gates**: Linux only. NFSv4.2 server support required.
+
+---
+
+### <a id="op_directory"></a>op_directory
+
+**Tier**: POSIX.1-2008 (O_DIRECTORY open flag)
+
+**Asserts**: `open()` with `O_DIRECTORY` succeeds on directories and fails ENOTDIR on regular files, via NFS file-type reporting.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `case2: O_DIRECTORY on regular file succeeded` | Server misreported file type or client didn't enforce O_DIRECTORY. | Check LOOKUP reply's file_type; client kernel version. |
+| `case4: O_DIRECTORY via symlink-to-file succeeded` | Symlink target file-type check didn't fire. | Client's symlink resolution path. |
+| `NOTE: case6 O_CREAT \| O_DIRECTORY accepted` | Behavior is implementation-defined for that combo; informational. | None. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_fd_sharing"></a>op_fd_sharing
+
+**Tier**: POSIX (dup / dup2 / fork / O_CLOEXEC)
+
+**Asserts**: `dup()`/`dup2()`/`F_DUPFD`/`fork()` share the open file description; independent `open()` calls have independent offsets; `O_CLOEXEC` is inherited across fork but not exec; `F_DUPFD_CLOEXEC` sets the flag without modifying source.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `case1: dup'd fd offset = %lld, expected 3 (offset sharing broken)` | dup'd fds don't share file offset. POSIX requires the shared open-file-description semantic. | Client kernel-level bug; not NFS-specific. Re-run locally to confirm. |
+| `case4: fd2 offset %lld, expected 0 (independent open should have its own offset)` | Two open() calls returning fds that share offset. Client-side bug. | Same. |
+| `case5: parent offset %lld after child write, expected 3 (fork offset sharing broken)` | Fork inheritance broken. | Same. |
+| `case6: O_CLOEXEC fd not inherited across fork` | CLOEXEC fired on fork instead of exec. | Kernel bug. |
+
+**Environmental gates**: None. Failures here are almost always local-FS regressions, not NFS.
+
+---
+
+### <a id="op_fdopendir"></a>op_fdopendir
+
+**Tier**: POSIX.1-2008
+
+**Asserts**: `fdopendir(3)` converts a dirfd obtained from `openat` into a DIR* usable by readdir. Essential for `*at()`-style directory walking.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `fdopendir: %s` | Call failed. EBADF suggests the dirfd was closed; EINVAL suggests the fd isn't a directory. | Check state of the fd before calling. |
+| `'alpha'/'beta'/'gamma' not found in readdir` | Created entries not visible through the fdopendir DIR*. Cache coherence or readdir-cookie issue. | Compare with `op_readdir` for basic readdir path. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_io_advise"></a>op_io_advise
+
+**Tier**: SPEC (NFSv4.2 IO_ADVISE, RFC 7862 §9)
+
+**Asserts**: `posix_fadvise(2)` succeeds without side effects visible to POSIX syscalls. IO_ADVISE is a hint only; it must not corrupt data or alter observable metadata.
+
+**Failure patterns**: Mostly none — this test is a sanity check that fadvise doesn't blow up. If it emits any FAIL, the client translated the hint into a destructive op.
+
+**Environmental gates**: POSIX fadvise available. Not all backends actually consult the hint; they just accept it.
+
+---
+
+### <a id="op_linkat"></a>op_linkat
+
+**Tier**: POSIX (hard links, LINK op RFC 7530 §18.14)
+
+**Asserts**: `link(2)` and `linkat(2)` create hard links; both paths resolve to same inode; link count increments; modifications via either path are visible through the other.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `link does not share inode` | Created "link" is actually a copy. Server LINK op bug; client may have silently made a copy. | Compare with `stat`; very rare. |
+| `st_nlink after link = %lu, expected 2` | Link count wrong after link — server didn't increment or client attrcache stale. | Check server LINK handling. |
+| `writing via b did not affect a` | Paths don't share data — same class as the first. | Real bug. |
+
+**Environmental gates**: None. Linkat case 6 is Linux-only.
+
+---
+
+### <a id="op_lookup"></a>op_lookup
+
+**Tier**: SPEC (NFSv4 LOOKUP, RFC 7530 §18.14)
+
+**Asserts**: `stat` on existing names resolves correctly; deep paths work; fstat and stat agree on the inode.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `stat ino %lu != fstat ino %lu` | Path lookup returns a different inode than an fd on the same file. Very serious — path resolution bug. | Client name cache returning stale inode. |
+| `stat(%s) succeeded on nonexistent file` | Negative dentry cache returning positive result. | Client dcache bug. |
+| `case2: expected ENOENT, got %s` | Wrong errno on missing file. | Client errno mapping. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_lookupp"></a>op_lookupp
+
+**Tier**: SPEC (NFSv4 LOOKUPP, RFC 7530 §18.15)
+
+**Asserts**: `stat("..")` and `openat(dirfd, "..")` resolve to the parent directory. On NFS, LOOKUPP takes a filehandle and returns the parent's handle.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `ino of '..' (%lu) != ino of parent (%lu)` | LOOKUPP returned wrong handle. Server doesn't track directory parents correctly (common in server backends that use hash-based filehandles). | Real server bug. |
+| `mkdir chain: %s` | Setup failure creating the directory chain. | Environmental. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_mkdir"></a>op_mkdir
+
+**Tier**: POSIX / SPEC (CREATE(NF4DIR), RFC 7530 §18.4)
+
+**Asserts**: `mkdir(2)` and `mkdirat(2)` create directories with correct mode and type.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `created object is not a directory` | Server CREATE returned a non-dir object for NF4DIR. Very rare. | Real server bug. |
+| `chmod mode %o != expected` | Created directory mode didn't reflect `mkdir(mode)` or a following chmod. | Check umask; check SETATTR path. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_rmdir"></a>op_rmdir
+
+**Tier**: POSIX (REMOVE on dir, RFC 7530 §18.25)
+
+**Asserts**: `rmdir(2)` and `unlinkat(AT_REMOVEDIR)` remove empty directories; fail ENOTEMPTY on non-empty.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `%s still accessible after rmdir` | Client's negative-dentry cache isn't updated after rmdir. | Client dcache invalidation bug. |
+| `rmdir on non-empty dir unexpectedly succeeded` | Server or client dropped the non-empty check. | Real bug. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_mknod_fifo"></a>op_mknod_fifo
+
+**Tier**: SPEC (CREATE(NF4FIFO), RFC 7530 §18.4)
+
+**Asserts**: `mkfifo(3)` creates a FIFO (named pipe); lstat returns `S_IFIFO`.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `lstat mode 0%o is not S_IFIFO` | Server stored the FIFO as wrong type. | Real server bug. |
+| `mkfifo: EOPNOTSUPP` | Some NFS server backends refuse FIFO creation. | Server backend limitation. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_open_downgrade"></a>op_open_downgrade
+
+**Tier**: SPEC (NFSv4 OPEN_DOWNGRADE, RFC 7530 §18.18)
+
+**Asserts**: When the process holds multiple OPENs with overlapping share-access bits and closes one, the server's share-access state tracks the downgrade correctly.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `data mismatch at byte %zu via dup'd fd` | State degraded incorrectly across dup/close sequence. | Client's OPEN_DOWNGRADE generation logic. |
+| `write via dup'd fd: %s` | After downgrade, a still-valid fd can no longer write. | Server OPEN_DOWNGRADE tracking bug. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_open_excl"></a>op_open_excl
+
+**Tier**: POSIX / SPEC (OPEN createmode=EXCLUSIVE4_1, RFC 7530 §18.16)
+
+**Asserts**: `open(O_CREAT | O_EXCL)` on a nonexistent file succeeds; on an existing file fails EEXIST.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `O_CREAT \| O_EXCL on existing file succeeded` | Server dropped the EXCL check. Classic NFS race bug. | Real server bug. |
+| `expected EEXIST, got %s` | Wrong errno. | Errno mapping. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_owner_override"></a>op_owner_override
+
+**Tier**: POSIX + Linux-specific (file owner ACL overrides)
+
+**Asserts**: On Linux, the file owner can chmod/unlink/rename a 0444 file they own — a common `git gc` path. POSIX-strict says EACCES; Linux says OK. Test has `-P` (POSIX-strict) and `-L` (Linux-permissive) modes.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `[POSIX] case1: owner chmod 0444->0644: %s` | Owner couldn't chmod their own file. Most servers permit this. | Check server's ACL model. |
+| `[LINUX] case... succeeded, but POSIX compliance mode (-P) expects failure` | Running in -P mode against a Linux-behavior server. | Expected; switch to -L mode for Linux NFS. |
+
+**Environmental gates**: None. Mode flag: `-P` strict / `-L` Linux (default).
+
+---
+
+### <a id="op_readdir"></a>op_readdir
+
+**Tier**: POSIX / SPEC (READDIR, RFC 7530 §18.23)
+
+**Asserts**: Basic readdir round-trip — created entries appear, once each.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `entry '%s' seen twice` | Server readdir reply has duplicate entries or client readdir-cookie cache replayed. | Server or client readdir bug. |
+| `entry '%s' missing from readdir` | Entry created but not in reply. | Check server; check read-dir-plus variants. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_rename_self"></a>op_rename_self
+
+**Tier**: POSIX.1-2024 (rename same-inode no-op)
+
+**Asserts**: `rename(a, b)` where `a` and `b` are hard links to the same file (or `a == b`) is a successful no-op per POSIX.1-2024; older POSIX allowed either success or removing `a`.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `rename(a, a) failed: %s` | rename-self returned an error. | Server doesn't honor POSIX.1-2024 no-op semantic. |
+| `file vanished after rename(a, a)` | Server removed the file on rename-self. Pre-POSIX.1-2024 behavior. | Recorded as FAIL; some servers still behave this way. |
+| `inode changed after rename(a, a)` | Server recreated the inode. Very unusual. | Real bug. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_setattr"></a>op_setattr
+
+**Tier**: POSIX / SPEC (SETATTR umbrella, RFC 7530 §18.30)
+
+**Asserts**: chmod / chown / truncate / utimensat round-trip. Overlaps with op_chmod_chown, op_truncate_grow, op_utimensat but exercises SETATTR as one combined op.
+
+**Failure patterns**: See per-op specifics in the dedicated tests.
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_statx_btime"></a>op_statx_btime
+
+**Tier**: SPEC (NFSv4.2 time_create, RFC 7862 §12.2)
+
+**Asserts**: Birth time (creation time) is present, plausible, stable under utimensat, stable across close/open.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `SKIP: server did not return time_create` | Server doesn't advertise the attribute. Expected on many servers. | Informational. |
+| `btime %lld is %lld s from wall %lld (> 60s window)` | Server clock skew or btime recording a different event. | Check NTP. |
+| `btime > mtime at creation` | btime set later than mtime — impossible unless server is inconsistent. | Real server bug. |
+| `btime shifted under utimensat` | Backdating mtime via utimensat shifted btime too — btime must be immutable. | Real bug. The whole point of btime is immutability. |
+
+**Environmental gates**: Linux 4.11+ (statx) or FreeBSD 10+ (st_birthtimespec). SKIP elsewhere.
+
+---
+
+### <a id="op_symlink"></a>op_symlink
+
+**Tier**: POSIX / SPEC (SYMLINK, READLINK, RFC 7530 §18.22, §18.26)
+
+**Asserts**: Basic symlink + readlink round-trip; lstat vs stat distinction; dangling symlinks; long targets; unlink removes the link not the target.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `readlink returned %zd bytes = '%s'` | Byte count wrong or content differs from what was symlink'd. | Server symlink storage bug. |
+| `readlinkat failed on dangling symlink: %s` | Server required target to exist for readlink. Wrong — readlink operates on the link itself. | Real bug. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_tmpfile"></a>op_tmpfile
+
+**Tier**: CLIENT + SPEC (O_TMPFILE, Linux 3.11+ / NFSv4.2 CLAIM_TEMPORARY)
+
+**Asserts**: `open(dir, O_TMPFILE)` creates an unnamed file usable via the fd; unvisible in readdir; becomes permanent via `linkat`.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `NOTE: case1 O_TMPFILE not supported here` | Server doesn't implement NFSv4.2 O_TMPFILE support. SKIP with NOTE. | Informational. |
+| `linkat materialize failed` | linkat couldn't promote the O_TMPFILE to a named file. | Check AT_EMPTY_PATH support; fallback /proc path used by the test. |
+| `file visible via readdir while still O_TMPFILE` | Server leaked the intermediate name. | Server bug. |
+
+**Environmental gates**: Linux client + server with NFSv4.2 O_TMPFILE support.
+
+---
+
+### <a id="op_utimensat"></a>op_utimensat
+
+**Tier**: POSIX.1-2008 (utimensat with UTIME_NOW, UTIME_OMIT, nsec precision)
+
+**Asserts**: utimensat correctly sets atime/mtime to specified values, honors UTIME_NOW (use current time) and UTIME_OMIT (leave alone), and preserves nanosecond precision where supported.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `mtime nsec = 0 after nsec-level utimensat` | Server truncated to second granularity. | Server-side limitation; inspect the backend. |
+| `atime changed when UTIME_OMIT was specified for atime` | Server ignored UTIME_OMIT. | Real bug. |
+| `utimensat with UTIME_NOW did not update mtime to current time` | Server ignored UTIME_NOW; stored the raw value. | Real bug. |
+
+**Environmental gates**: None.
+
+---
+
+### <a id="op_xattr"></a>op_xattr
+
+**Tier**: SPEC (NFSv4.2 XATTR extension, RFC 8276)
+
+**Asserts**: `setxattr`/`getxattr`/`listxattr`/`removexattr` on the `user.*` namespace round-trip. Tests GETXATTR, SETXATTR, LISTXATTRS, REMOVEXATTR NFSv4.2 ops.
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `setxattr: EOPNOTSUPP` or similar | Server or backend doesn't support user xattrs. | Check server config; some backends require explicit enable. |
+| `getxattr returned wrong value` | Data not round-tripping. | Real bug; NFSv4.2 xattr path. |
+| `xattr not in listxattr` | setxattr succeeded but listxattr doesn't show it. | Server xattr index inconsistency. |
+| `removexattr: %s` | Can't remove a xattr just set. | Server xattr tracking bug. |
+
+**Environmental gates**: Linux `user.*` xattrs + NFSv4.2 server. Non-Linux platforms have different xattr APIs; test SKIPs.
 
 ---
 
@@ -1073,6 +1494,13 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `setuid/setgid not cleared after chown` | op_chmod_chown | POSIX security rule: chown must clear S_ISUID/S_ISGID |
 | `SEEK_HOLE at island0 reports premature hole` | op_seek | Server returned a hole offset inside the data extent |
 | `allocated region not all zero` | op_allocate | ALLOCATE extended the file but didn't zero-fill the extension |
+| `change cookie did not advance` | op_change_attr | Server didn't bump the NFSv4 change attribute on the op |
+| `st_blocks grew across PUNCH_HOLE` | op_deallocate | Server emulated punch-hole with zero-writes |
+| `link does not share inode` | op_linkat | LINK op stored as copy instead of hard link |
+| `ino of '..' (%lu) != ino of parent` | op_lookupp | Server doesn't track parent correctly |
+| `entry '%s' seen twice` | op_readdir, op_readdir_many | Duplicate from readdir — cookie replay or reply duplication |
+| `btime shifted under utimensat` | op_statx_btime | Server treats btime as mutable — defeats its purpose |
+| `file vanished after rename(a, a)` | op_rename_self | Pre-POSIX.1-2024 rename-self semantic |
 
 ---
 
