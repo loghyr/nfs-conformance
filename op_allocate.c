@@ -20,6 +20,14 @@
  *
  *   5. Negative offset returns EINVAL.
  *
+ *   6. ALLOCATE over an existing hole.  Create a sparse file with a
+ *      hole in the middle, posix_fallocate() the hole range, verify
+ *      the hole bytes now read as zeros (unchanged) AND that the
+ *      surrounding dense regions are untouched.  Catches servers
+ *      that translate ALLOCATE into zero-filled WRITE past EOF
+ *      cleanly but get the mid-file hole-fill path wrong (e.g.,
+ *      leaving stale server-side allocated-but-unwritten bytes).
+ *
  * Indicative server-op check: after the extend in case 1, st_blocks
  * should be greater than zero on backends that actually allocated.
  * A client that emulates ALLOCATE via WRITE-of-zeros also produces
@@ -290,6 +298,123 @@ static void case_negative_offset(void)
 			 rc == 0 ? "0" : strerror(rc));
 }
 
+/*
+ * Case 6: ALLOCATE over an existing hole.  The file looks like
+ *
+ *     [0 .. dense)       pattern A
+ *     [dense .. 2*dense) hole (sparse, zeros on read)
+ *     [2*dense .. 3*dense) pattern B
+ *
+ * posix_fallocate([dense .. 2*dense)) then:
+ *   - file size unchanged;
+ *   - head pattern A intact;
+ *   - allocated-hole bytes still read as zero;
+ *   - tail pattern B intact.
+ *
+ * Gemini gap: existing cases cover extend-past-EOF and
+ * allocate-inside-already-dense; the mid-file hole-fill was not
+ * exercised, and is the NFSv4.2 ALLOCATE path that is subtly
+ * different from a WRITE-of-zeros emulation.
+ */
+static void case_allocate_into_hole(off_t dense)
+{
+	char name[64];
+	int fd = scratch_open("t10c6", name, sizeof(name));
+
+	const off_t size = 3 * dense;
+
+	/* Create sparse layout: pwrite A at [0..dense), then pwrite B
+	 * at [2*dense..3*dense); the middle [dense..2*dense) is a hole. */
+	unsigned char *a = malloc((size_t)dense);
+	unsigned char *b = malloc((size_t)dense);
+	if (!a || !b) {
+		complain("case6: malloc");
+		free(a); free(b); close(fd); unlink(name); return;
+	}
+	fill_pattern(a, (size_t)dense, 0xA606);
+	fill_pattern(b, (size_t)dense, 0xB606);
+
+	if (pwrite_all(fd, a, (size_t)dense, 0, "case6: A") < 0
+	    || pwrite_all(fd, b, (size_t)dense, 2 * dense,
+			  "case6: B") < 0) {
+		free(a); free(b); close(fd); unlink(name); return;
+	}
+	fdatasync(fd);
+
+	struct stat st_before;
+	if (fstat(fd, &st_before) != 0) {
+		complain("case6: fstat before: %s", strerror(errno));
+		free(a); free(b); close(fd); unlink(name); return;
+	}
+	if (st_before.st_size != size) {
+		complain("case6: pre-fallocate size %lld != %lld "
+			 "(sparse layout setup failed)",
+			 (long long)st_before.st_size, (long long)size);
+		free(a); free(b); close(fd); unlink(name); return;
+	}
+
+	int rc = do_fallocate(fd, dense, dense);
+	if (rc == EINVAL || rc == ENOSYS || rc == EOPNOTSUPP) {
+		if (!Sflag)
+			printf("NOTE: %s: case6 posix_fallocate returned %s -- "
+			       "skipping\n", myname, strerror(rc));
+		free(a); free(b); close(fd); unlink(name); return;
+	}
+	if (rc != 0) {
+		complain("case6: posix_fallocate([%lld, %lld)): %s",
+			 (long long)dense, (long long)(2 * dense),
+			 strerror(rc));
+		free(a); free(b); close(fd); unlink(name); return;
+	}
+
+	struct stat st_after;
+	if (fstat(fd, &st_after) != 0) {
+		complain("case6: fstat after: %s", strerror(errno));
+		free(a); free(b); close(fd); unlink(name); return;
+	}
+	if (st_after.st_size != size)
+		complain("case6: size changed across hole-fill "
+			 "(%lld -> %lld)",
+			 (long long)st_before.st_size,
+			 (long long)st_after.st_size);
+
+	/* Head intact. */
+	unsigned char *rh = malloc((size_t)dense);
+	if (rh && pread_all(fd, rh, (size_t)dense, 0,
+			    "case6: verify head") == 0) {
+		if (memcmp(rh, a, (size_t)dense) != 0)
+			complain("case6: head pattern A corrupted by "
+				 "mid-file ALLOCATE");
+	}
+	free(rh);
+
+	/* Filled hole reads zero. */
+	unsigned char *rhole = malloc((size_t)dense);
+	if (rhole && pread_all(fd, rhole, (size_t)dense, dense,
+			       "case6: verify hole") == 0) {
+		if (!all_zero(rhole, (size_t)dense))
+			complain("case6: allocated hole bytes non-zero "
+				 "after mid-file ALLOCATE "
+				 "(server exposed stale backing bytes?)");
+	}
+	free(rhole);
+
+	/* Tail intact. */
+	unsigned char *rt = malloc((size_t)dense);
+	if (rt && pread_all(fd, rt, (size_t)dense, 2 * dense,
+			    "case6: verify tail") == 0) {
+		if (memcmp(rt, b, (size_t)dense) != 0)
+			complain("case6: tail pattern B corrupted by "
+				 "mid-file ALLOCATE");
+	}
+	free(rt);
+
+	free(a);
+	free(b);
+	close(fd);
+	unlink(name);
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -328,6 +453,8 @@ next:
 	RUN_CASE("case_inside_existing", case_inside_existing(1 * 1024 * 1024));
 	RUN_CASE("case_zero_length", case_zero_length());
 	RUN_CASE("case_negative_offset", case_negative_offset());
+	RUN_CASE("case_allocate_into_hole",
+		 case_allocate_into_hole(512 * 1024));
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
