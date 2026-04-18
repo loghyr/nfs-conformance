@@ -31,6 +31,25 @@
  *   5. Hard-link open file, unlink original.  Access via fd must
  *      succeed.  Access via the surviving link name must succeed.
  *
+ *   6. Symlink handle invalidation.  Open a symlink via
+ *      O_PATH|O_NOFOLLOW (Linux-only), unlink the symlink itself
+ *      (not its target), then fstat through the held fd.  Local
+ *      filesystems typically keep the inode around while the fd
+ *      is held; NFS clients commonly drop the server-side
+ *      reference and return ESTALE.  The test accepts either
+ *      "fstat succeeds" or "fstat returns ENOENT / ESTALE / EBADF";
+ *      any OTHER errno, or a hang, is the bug.  Gated on O_PATH
+ *      (Linux).
+ *
+ *   7. Rename-replace: fd holds the original inode.  Create file
+ *      A with pattern P1, open fd to A, rename A -> B (a different
+ *      name), create a NEW file at the original path A with pattern
+ *      P2.  Accessing through the held fd must still see P1 (the
+ *      inode that moved to B); accessing path A via a fresh open
+ *      must see P2 (the new inode).  Gemini gap: server-side name
+ *      replace while the client holds a handle -- a known NFS
+ *      coherence trap when the client uses path-based fallbacks.
+ *
  * Portable: POSIX across Linux / FreeBSD / macOS / Solaris.
  */
 
@@ -266,6 +285,188 @@ static void case_hardlink_unlink_original(void)
 	unlink(b);
 }
 
+static void case_symlink_handle_stale(void)
+{
+#ifdef O_PATH
+	char sl[64], target[64];
+	snprintf(sl, sizeof(sl), "t_sh.sl.%ld", (long)getpid());
+	snprintf(target, sizeof(target), "t_sh.tgt.%ld", (long)getpid());
+	unlink(sl);
+	unlink(target);
+
+	/* Create a real target + a symlink to it. */
+	int tfd = open(target, O_RDWR | O_CREAT, 0644);
+	if (tfd < 0) {
+		complain("case6: open target: %s", strerror(errno));
+		return;
+	}
+	close(tfd);
+	if (symlink(target, sl) != 0) {
+		complain("case6: symlink: %s", strerror(errno));
+		unlink(target);
+		return;
+	}
+
+	/*
+	 * Open the symlink itself, not its target.  O_PATH|O_NOFOLLOW
+	 * gives us a handle to the link object; without it O_RDONLY
+	 * would follow and we'd get a handle on the target.
+	 */
+	int slfd = open(sl, O_PATH | O_NOFOLLOW);
+	if (slfd < 0) {
+		if (errno == EINVAL || errno == EOPNOTSUPP) {
+			if (!Sflag)
+				printf("NOTE: %s: case6 O_PATH|O_NOFOLLOW "
+				       "on symlink returned %s -- skipping\n",
+				       myname, strerror(errno));
+			unlink(sl); unlink(target);
+			return;
+		}
+		complain("case6: open(O_PATH|O_NOFOLLOW) symlink: %s",
+			 strerror(errno));
+		unlink(sl); unlink(target);
+		return;
+	}
+
+	/* Remove the symlink while the fd is held.  Target stays. */
+	if (unlink(sl) != 0) {
+		complain("case6: unlink symlink: %s", strerror(errno));
+		close(slfd); unlink(target);
+		return;
+	}
+
+	/*
+	 * fstat through the held fd.  Legal outcomes:
+	 *   - success: the client / kernel kept the inode alive
+	 *     (local FS, some NFS clients with attr cache retention).
+	 *   - ESTALE / ENOENT / EBADF: the server or client dropped
+	 *     the reference.
+	 * Anything else is a bug.  A hang would also be a bug but the
+	 * test harness would time out elsewhere.
+	 */
+	struct stat st;
+	errno = 0;
+	if (fstat(slfd, &st) == 0) {
+		if (!Sflag)
+			printf("NOTE: %s: case6 fstat on removed symlink "
+			       "succeeded (inode retained)\n", myname);
+	} else if (errno != ESTALE && errno != ENOENT && errno != EBADF) {
+		complain("case6: fstat on removed symlink returned %s "
+			 "(expected success, ESTALE, ENOENT, or EBADF)",
+			 strerror(errno));
+	}
+
+	close(slfd);
+	unlink(target);
+#else
+	if (!Sflag)
+		printf("NOTE: %s: case6 O_PATH unavailable -- skipping "
+		       "symlink-handle-stale case\n", myname);
+#endif
+}
+
+static void case_rename_then_recreate(void)
+{
+	char a[64], b[64];
+	snprintf(a, sizeof(a), "t_sh.rA.%ld", (long)getpid());
+	snprintf(b, sizeof(b), "t_sh.rB.%ld", (long)getpid());
+	unlink(a); unlink(b);
+
+	/* Create A with pattern P1. */
+	int fd = open(a, O_RDWR | O_CREAT, 0644);
+	if (fd < 0) {
+		complain("case7: open A: %s", strerror(errno));
+		return;
+	}
+	unsigned char p1[128], p2[128];
+	fill_pattern(p1, sizeof(p1), 71);
+	fill_pattern(p2, sizeof(p2), 72);
+	if (pwrite_all(fd, p1, sizeof(p1), 0, "case7: seed P1") != 0) {
+		close(fd); unlink(a); return;
+	}
+	if (fsync(fd) != 0) {
+		complain("case7: fsync: %s", strerror(errno));
+		close(fd); unlink(a); return;
+	}
+
+	/* Capture the original inode for the fd-tracks-inode check. */
+	struct stat st_fd_before;
+	if (fstat(fd, &st_fd_before) != 0) {
+		complain("case7: fstat before rename: %s", strerror(errno));
+		close(fd); unlink(a); return;
+	}
+
+	/* Rename A -> B.  The fd still references the (now-named-B) inode. */
+	if (rename(a, b) != 0) {
+		complain("case7: rename A -> B: %s", strerror(errno));
+		close(fd); unlink(a); unlink(b); return;
+	}
+
+	/* Create a NEW file at the original path A with pattern P2. */
+	int fd_new = open(a, O_RDWR | O_CREAT | O_EXCL, 0644);
+	if (fd_new < 0) {
+		complain("case7: create new A: %s", strerror(errno));
+		close(fd); unlink(a); unlink(b); return;
+	}
+	if (pwrite_all(fd_new, p2, sizeof(p2), 0, "case7: seed P2") != 0) {
+		close(fd_new); close(fd); unlink(a); unlink(b); return;
+	}
+	if (fsync(fd_new) != 0) {
+		complain("case7: fsync new A: %s", strerror(errno));
+	}
+
+	struct stat st_fd_after, st_new;
+	if (fstat(fd, &st_fd_after) != 0)
+		complain("case7: fstat held fd after rename+recreate: %s",
+			 strerror(errno));
+	else if (st_fd_after.st_ino != st_fd_before.st_ino)
+		complain("case7: held fd's inode changed across "
+			 "rename+recreate (%lu -> %lu) -- fd should track "
+			 "the original inode regardless of path-level "
+			 "mutations",
+			 (unsigned long)st_fd_before.st_ino,
+			 (unsigned long)st_fd_after.st_ino);
+
+	if (fstat(fd_new, &st_new) != 0) {
+		complain("case7: fstat new A fd: %s", strerror(errno));
+	} else if (st_new.st_ino == st_fd_before.st_ino) {
+		complain("case7: new A has the same inode as the original "
+			 "(rename did not actually move the inode, or the "
+			 "recreate clobbered the wrong entry)");
+	}
+
+	/* Read via held fd -- must return P1 (original inode's content). */
+	unsigned char rb[128];
+	if (pread_all(fd, rb, sizeof(rb), 0,
+		      "case7: read via held fd") == 0) {
+		if (memcmp(rb, p1, sizeof(p1)) != 0)
+			complain("case7: held fd read != P1 after "
+				 "rename+recreate (fd followed the path "
+				 "instead of the inode)");
+	}
+
+	/* Read via path A (fresh fd) -- must return P2. */
+	int fd_peek = open(a, O_RDONLY);
+	if (fd_peek < 0) {
+		complain("case7: peek open A: %s", strerror(errno));
+	} else {
+		unsigned char rbp[128];
+		if (pread_all(fd_peek, rbp, sizeof(rbp), 0,
+			      "case7: read via path A") == 0) {
+			if (memcmp(rbp, p2, sizeof(p2)) != 0)
+				complain("case7: path-A read != P2 "
+					 "(recreate did not place P2 "
+					 "at path A)");
+		}
+		close(fd_peek);
+	}
+
+	close(fd_new);
+	close(fd);
+	unlink(a);
+	unlink(b);
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -304,6 +505,8 @@ next:
 	RUN_CASE("case_rmdir_readdir", case_rmdir_readdir());
 	RUN_CASE("case_rename_fd_tracks_inode", case_rename_fd_tracks_inode());
 	RUN_CASE("case_hardlink_unlink_original", case_hardlink_unlink_original());
+	RUN_CASE("case_symlink_handle_stale", case_symlink_handle_stale());
+	RUN_CASE("case_rename_then_recreate", case_rename_then_recreate());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
