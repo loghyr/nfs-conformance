@@ -1252,18 +1252,23 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 ### <a id="op_change_attr"></a>op_change_attr
 
-**Tier**: SPEC (NFSv4 change attribute, RFC 7530 §5.8.1.4; Linux statx STATX_CHANGE_COOKIE)
+**Tier**: SPEC (NFSv4 change attribute observable effects, RFC 7530 §5.8.1.4)
 
-**Asserts**: Every metadata- or data-modifying operation advances the change attribute. Clients (and applications like rsync) rely on this for caching.
+**Asserts**: The NFSv4 change attribute's _observable effects_ hold: a mutation via a separate fd (write / chmod) becomes visible on subsequent stat; pure reads do not bump mtime/ctime. The change counter itself is kernel-internal (`STATX_CHANGE_COOKIE` is not surfaced to userspace), so this test exercises the downstream invalidation instead of reading the value.
+
+**Cases**: `case_mutation_visible`, `case_metadata_mutation_visible`, `case_pure_read_no_mutation`.
 
 **Failure patterns**
 
 | Signature | Likely cause | Diagnose |
 |---|---|---|
-| `change cookie did not advance across %s` | Operation didn't bump the server's change attribute. Real conformance bug. | Look at server's change-attribute implementation; knfsd vs Ganesha vs vendor. |
-| `STATX_CHANGE_COOKIE not defined in this glibc/kernel header set` | Build-time guard; requires Linux 6.5+ headers. SKIPs. | Upgrade kernel headers. |
+| `case1: mtime did not advance across the write ... change_attr-based cache invalidation is broken` | Writer-reader cache coherence broken: the client served stale attrs after a separate-fd write. Same class of bug as `op_close_to_open` regressions. | Check mount options (look for unexpected `nocto`); check server's change_attribute bump path on WRITE. |
+| `case1: size did not advance across the write` | Content-side symptom of the same bug; server's GETATTR reply or client's attr cache missed the mutation. | Same as above. |
+| `case2: ctime did not advance across chmod` | chmod didn't advance ctime (or client failed to invalidate). POSIX + RFC 7530 §5.5 require it. | Server metadata-change-attr path; compare with op_timestamps chmod case. |
+| `case3: mtime advanced across a pure read` | Server or client bumped mtime on access. Classic relatime-vs-noatime misconfiguration -- or a real bug. | Check mount options on server's backing FS (`mount | grep atime`); reads must not touch mtime. |
+| `case3: ctime advanced across a pure read` | Same class. | Same. |
 
-**Environmental gates**: Linux 6.5+ for STATX_CHANGE_COOKIE. SKIPs otherwise.
+**Environmental gates**: None. Portable POSIX; no headers/kernel version requirement.
 
 ---
 

@@ -1,37 +1,47 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
 /* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
 /*
- * op_change_attr.c -- exercise the NFSv4 change attribute via
- * statx(STATX_CHANGE_COOKIE) (Linux 6.5+, Jeff Layton's work).
+ * op_change_attr.c -- exercise the observable effects of the NFSv4
+ * change attribute (RFC 7530 S5.8.1.4, preserved in RFC 8881 S5.5.1).
  *
- * The change attribute (RFC 7530 S5.8.1.4, preserved in RFC 8881
- * / NFSv4.1) is a monotonically-advancing per-object cookie that
- * clients use as the cache-coherency signal: if the cookie has not
- * changed, the client can reuse cached data; if it has, the client
- * must revalidate.
+ * NFSv4 defines an opaque per-object "change" counter that advances on
+ * any content or metadata mutation.  Clients use the counter as their
+ * cache-coherency signal: if change_attr is unchanged since the last
+ * GETATTR, cached attrs are still valid; if it has advanced, the
+ * cache is stale and must be refreshed.
  *
- * Server-side bugs in change_attr are *devastating* and almost
- * invisible without a test like this: the client happily serves
- * stale cached data until someone notices.  This test verifies the
- * four invariants clients assume:
+ * Prior versions of this test tried to read the change counter
+ * directly via statx(STATX_CHANGE_COOKIE).  That's impossible: the
+ * STATX_CHANGE_COOKIE macro exists only in the Linux kernel's
+ * internal include/linux/stat.h and is NOT surfaced through the
+ * uapi; userspace never sees stx_change_attr.  Every test run on
+ * every Linux version will fail a "headers missing" check because
+ * no userspace headers will ever define it.  Test the observable
+ * effects instead.
  *
- *   1. Post-create, STATX_CHANGE_COOKIE is populated.
- *   2. Writes advance the cookie.
- *   3. Multiple writes produce a monotonic sequence (each cookie
- *      strictly greater than the previous by the NFSv4 "monotonic"
- *      rule; RFC 7530 guarantees advancement, not a specific step).
- *   4. Pure reads do NOT advance the cookie.
+ * Cases:
  *
- * Case 5 is an indicative check: metadata changes (chmod) should
- * also advance the cookie, because they affect the change-attr
- * bitmap per RFC 7530 S5.5.
+ *   1. Mutation via a separate fd is visible on subsequent stat.
+ *      Create and stat a file (caches attrs).  Open a second fd,
+ *      pwrite, close.  Re-stat via path -- mtime must have advanced.
+ *      Exercises change_attr-driven cache invalidation across the
+ *      close-to-open boundary that every NFSv4 mount relies on.
  *
- * Linux-only: no other platform exposes the change attribute to
- * userspace via a portable syscall.  macOS / FreeBSD stub out.
- * Linux < 6.5 stubs out via the STATX_CHANGE_COOKIE macro guard.
+ *   2. Metadata mutation is visible on subsequent stat.  chmod
+ *      advances change_attr per RFC 7530 S5.5; the new mode must be
+ *      visible to a subsequent stat.
+ *
+ *   3. Pure reads do NOT appear to mutate the file.  stat, read
+ *      content, stat again -- mtime must not advance on the read-only
+ *      path.  Catches servers that erroneously bump change_attr or
+ *      mtime on access.
+ *
+ * Portable POSIX; no special mount options required.  Close-to-open
+ * and noac variants are covered separately by op_close_to_open and
+ * op_noac.
  */
 
-#define _GNU_SOURCE
+#define _POSIX_C_SOURCE 200809L
 
 #include "tests.h"
 
@@ -43,6 +53,14 @@
 #include <time.h>
 #include <unistd.h>
 
+/*
+ * This test sleeps past a full-second boundary between each before/
+ * after pair, so time_t-granularity fields are sufficient.  Using
+ * st_mtime / st_ctime keeps the logic portable across POSIX
+ * (st_mtim) and Darwin (st_mtimensec/st_mtimespec) layouts without
+ * a per-platform shim.
+ */
+
 int Hflag = 0;
 int Sflag = 0;
 int Tflag = 0;
@@ -51,188 +69,197 @@ int Nflag = 0;
 
 static const char *myname = "op_change_attr";
 
-#if !defined(__linux__)
-int main(void)
-{
-	skip("%s: STATX_CHANGE_COOKIE is Linux-specific (6.5+)", myname);
-	return TEST_SKIP;
-}
-#else
-
-#if !defined(STATX_CHANGE_COOKIE)
-int main(void)
-{
-	skip("%s: STATX_CHANGE_COOKIE not defined in this glibc/kernel "
-	     "header set (need Linux 6.5+ and matching headers)",
-	     myname);
-	return TEST_SKIP;
-}
-#else
-
 static void usage(void)
 {
 	fprintf(stderr,
 		"usage: %s [-hstfn] [-d DIR]\n"
-		"  exercise statx(STATX_CHANGE_COOKIE) -> NFSv4 change_attr\n"
+		"  observable effects of the NFSv4 change attribute\n"
 		"  -h help  -s silent  -t timing  -f function-only\n"
 		"  -n no mkdir  -d DIR  (default cwd)\n",
 		myname);
 }
 
-/*
- * get_cookie -- statx for STATX_CHANGE_COOKIE; complain and return
- * 0 (as a failure sentinel) if the server did not return the mask
- * bit.  Returns the cookie on success.  The caller must check that
- * the mask bit actually came back; a server that doesn't advertise
- * change_attr will SKIP the whole test in main() via a feature probe.
- */
-static uint64_t get_cookie(const char *path, const char *ctx, int *ok)
-{
-	struct statx st;
-	if (statx(AT_FDCWD, path, 0, STATX_CHANGE_COOKIE, &st) != 0) {
-		complain("%s: statx: %s", ctx, strerror(errno));
-		*ok = 0;
-		return 0;
-	}
-	if (!(st.stx_mask & STATX_CHANGE_COOKIE)) {
-		complain("%s: STATX_CHANGE_COOKIE not in returned mask",
-			 ctx);
-		*ok = 0;
-		return 0;
-	}
-	*ok = 1;
-	return st.stx_change_attr;
-}
 
 /*
- * feature_probe -- verify the server actually returns change_attr
- * on THIS mount.  If it doesn't, we SKIP rather than FAIL -- many
- * older NFS servers and some non-Linux filesystems don't advertise
- * change_attr.  Must run before any cases.  Unlinks the scratch
- * file before skip() since skip() exits.
+ * Many NFS server backends round timestamps to the nearest second.
+ * Pre-stat the scratch file, then wait until the next wall-clock
+ * second boundary so a subsequent mutation lands at a distinct
+ * integer second.  Keeps case 1 and case 2 from flaking on
+ * second-granular backends.
  */
-static void feature_probe(const char *path)
+static void sleep_to_next_second(void)
 {
-	struct statx st;
-	if (statx(AT_FDCWD, path, 0, STATX_CHANGE_COOKIE, &st) != 0) {
-		int e = errno;
-		unlink(path);
-		errno = e;
-		skip("%s: statx failed: %s (kernel/mount may not support "
-		     "STATX_CHANGE_COOKIE)",
-		     myname, strerror(errno));
-	}
-	if (!(st.stx_mask & STATX_CHANGE_COOKIE)) {
-		unlink(path);
-		skip("%s: server did not return STATX_CHANGE_COOKIE "
-		     "(change attribute not advertised)",
-		     myname);
-	}
+	struct timespec now;
+	clock_gettime(CLOCK_REALTIME, &now);
+	unsigned int ms_to_next = 1000 - (unsigned int)(now.tv_nsec / 1000000U);
+	/* Add a 50 ms cushion so we are safely past the boundary. */
+	sleep_ms(ms_to_next + 50);
 }
 
-static void case_write_advances(const char *path)
+static void case_mutation_visible(void)
 {
-	int ok;
-	uint64_t before = get_cookie(path, "case2:before", &ok);
-	if (!ok) return;
+	char f[64];
+	snprintf(f, sizeof(f), "t_ca.mv.%ld", (long)getpid());
+	unlink(f);
 
-	int fd = open(path, O_WRONLY);
-	if (fd < 0) { complain("case2: open: %s", strerror(errno)); return; }
-	if (pwrite_all(fd, "hello\n", 6, 0, "case2:write") < 0) {
-		close(fd);
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case1: open: %s", strerror(errno));
+		return;
+	}
+	unsigned char seed[128];
+	fill_pattern(seed, sizeof(seed), 0x11);
+	if (pwrite_all(fd, seed, sizeof(seed), 0, "case1: seed") != 0) {
+		close(fd); unlink(f); return;
+	}
+	close(fd);
+
+	struct stat st1;
+	if (stat(f, &st1) != 0) {
+		complain("case1: stat before: %s", strerror(errno));
+		unlink(f); return;
+	}
+
+	sleep_to_next_second();
+
+	/* Mutate via a SEPARATE fd -- exercises the cache-coherency path
+	 * that change_attr is supposed to drive. */
+	int fd2 = open(f, O_WRONLY);
+	if (fd2 < 0) {
+		complain("case1: open writer: %s", strerror(errno));
+		unlink(f); return;
+	}
+	unsigned char extra[64];
+	fill_pattern(extra, sizeof(extra), 0x22);
+	if (pwrite_all(fd2, extra, sizeof(extra), sizeof(seed),
+		       "case1: extend") != 0) {
+		close(fd2); unlink(f); return;
+	}
+	if (close(fd2) != 0) {
+		complain("case1: close writer: %s", strerror(errno));
+		unlink(f); return;
+	}
+
+	struct stat st2;
+	if (stat(f, &st2) != 0) {
+		complain("case1: stat after: %s", strerror(errno));
+		unlink(f); return;
+	}
+
+	if (st2.st_size == st1.st_size)
+		complain("case1: size did not advance across the write "
+			 "(was %lld, still %lld)",
+			 (long long)st1.st_size, (long long)st2.st_size);
+	if (st2.st_mtime <= st1.st_mtime)
+		complain("case1: mtime did not advance across the write "
+			 "(%lld -> %lld) -- change_attr-based cache "
+			 "invalidation is broken",
+			 (long long)st1.st_mtime, (long long)st2.st_mtime);
+
+	unlink(f);
+}
+
+static void case_metadata_mutation_visible(void)
+{
+	char f[64];
+	snprintf(f, sizeof(f), "t_ca.md.%ld", (long)getpid());
+	unlink(f);
+
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case2: open: %s", strerror(errno));
 		return;
 	}
 	close(fd);
 
-	uint64_t after = get_cookie(path, "case2:after", &ok);
-	if (!ok) return;
-	if (after == before)
-		complain("case2: change cookie did not advance across "
-			 "write (still %llu)",
-			 (unsigned long long)before);
-}
-
-static void case_monotonic(const char *path)
-{
-	int fd = open(path, O_WRONLY);
-	if (fd < 0) { complain("case3: open: %s", strerror(errno)); return; }
-
-	int ok;
-	uint64_t prev = get_cookie(path, "case3:t0", &ok);
-	if (!ok) { close(fd); return; }
-
-	for (int i = 0; i < 4; i++) {
-		char buf[16];
-		snprintf(buf, sizeof(buf), "pass %d\n", i);
-		if (pwrite_all(fd, buf, strlen(buf), (off_t)(i * 16),
-			       "case3:write") < 0)
-			break;
-		fdatasync(fd);
-
-		char ctx[32];
-		snprintf(ctx, sizeof(ctx), "case3:iter%d", i);
-		uint64_t cur = get_cookie(path, ctx, &ok);
-		if (!ok) break;
-		if (cur == prev)
-			complain("case3: cookie did not advance at iter %d "
-				 "(still %llu)",
-				 i, (unsigned long long)prev);
-		prev = cur;
+	struct stat st1;
+	if (stat(f, &st1) != 0) {
+		complain("case2: stat before: %s", strerror(errno));
+		unlink(f); return;
 	}
-	close(fd);
+
+	sleep_to_next_second();
+
+	if (chmod(f, 0600) != 0) {
+		complain("case2: chmod: %s", strerror(errno));
+		unlink(f); return;
+	}
+
+	struct stat st2;
+	if (stat(f, &st2) != 0) {
+		complain("case2: stat after: %s", strerror(errno));
+		unlink(f); return;
+	}
+
+	if ((st2.st_mode & 07777) != 0600)
+		complain("case2: mode not updated (%04o != 0600)",
+			 st2.st_mode & 07777);
+	if (st2.st_ctime <= st1.st_ctime)
+		complain("case2: ctime did not advance across chmod "
+			 "(%lld -> %lld) -- metadata change_attr mutation "
+			 "not visible",
+			 (long long)st1.st_ctime, (long long)st2.st_ctime);
+
+	unlink(f);
 }
 
-static void case_read_does_not_advance(const char *path)
+static void case_pure_read_no_mutation(void)
 {
-	int ok;
-	uint64_t before = get_cookie(path, "case4:before", &ok);
-	if (!ok) return;
+	char f[64];
+	snprintf(f, sizeof(f), "t_ca.rd.%ld", (long)getpid());
+	unlink(f);
 
-	int fd = open(path, O_RDONLY);
-	if (fd < 0) { complain("case4: open: %s", strerror(errno)); return; }
-	char buf[16];
-	ssize_t n = pread(fd, buf, sizeof(buf), 0);
-	(void)n;
-	close(fd);
-
-	uint64_t after = get_cookie(path, "case4:after", &ok);
-	if (!ok) return;
-	/*
-	 * NFSv4 leaves it implementation-defined whether reads may
-	 * advance the change attribute (servers that track access
-	 * time as part of "change" could bump it), but the dominant
-	 * Linux knfsd behaviour is that pure reads do NOT advance.
-	 * If the cookie moved, emit a NOTE rather than FAIL so we
-	 * don't false-alarm on strict-atime servers.
-	 */
-	if (after != before && !Sflag)
-		printf("NOTE: %s: read advanced change cookie "
-		       "(%llu -> %llu); server may be counting atime as "
-		       "a change\n",
-		       myname, (unsigned long long)before,
-		       (unsigned long long)after);
-}
-
-static void case_chmod_advances(const char *path)
-{
-	int ok;
-	uint64_t before = get_cookie(path, "case5:before", &ok);
-	if (!ok) return;
-
-	if (chmod(path, 0600) != 0) {
-		complain("case5: chmod: %s", strerror(errno));
+	int fd = open(f, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0) {
+		complain("case3: open: %s", strerror(errno));
 		return;
 	}
+	unsigned char seed[256];
+	fill_pattern(seed, sizeof(seed), 0x33);
+	if (pwrite_all(fd, seed, sizeof(seed), 0, "case3: seed") != 0) {
+		close(fd); unlink(f); return;
+	}
+	close(fd);
 
-	uint64_t after = get_cookie(path, "case5:after", &ok);
-	if (!ok) return;
-	if (after == before)
-		complain("case5: chmod did not advance change cookie "
-			 "(still %llu)",
-			 (unsigned long long)before);
+	struct stat st1;
+	if (stat(f, &st1) != 0) {
+		complain("case3: stat before: %s", strerror(errno));
+		unlink(f); return;
+	}
 
-	/* Restore mode for cleanup */
-	chmod(path, 0644);
+	sleep_to_next_second();
+
+	/* Pure reads: open O_RDONLY, read, close.  Must not advance
+	 * mtime.  Atime may advance under strict-atime mounts; we don't
+	 * assert on atime here. */
+	int rfd = open(f, O_RDONLY);
+	if (rfd < 0) {
+		complain("case3: open reader: %s", strerror(errno));
+		unlink(f); return;
+	}
+	unsigned char buf[256];
+	if (pread_all(rfd, buf, sizeof(buf), 0, "case3: read") != 0) {
+		close(rfd); unlink(f); return;
+	}
+	close(rfd);
+
+	struct stat st2;
+	if (stat(f, &st2) != 0) {
+		complain("case3: stat after: %s", strerror(errno));
+		unlink(f); return;
+	}
+
+	if (st2.st_mtime != st1.st_mtime)
+		complain("case3: mtime advanced across a pure read "
+			 "(%lld -> %lld) -- server or client bumped "
+			 "change_attr on access",
+			 (long long)st1.st_mtime, (long long)st2.st_mtime);
+	if (st2.st_ctime != st1.st_ctime)
+		complain("case3: ctime advanced across a pure read "
+			 "(%lld -> %lld)",
+			 (long long)st1.st_ctime, (long long)st2.st_ctime);
+
+	unlink(f);
 }
 
 int main(int argc, char **argv)
@@ -264,25 +291,16 @@ next:
 	if (Hflag) { usage(); return TEST_PASS; }
 
 	prelude(myname,
-		"statx(STATX_CHANGE_COOKIE) -> NFSv4 change attribute");
+		"observable effects of NFSv4 change_attribute (RFC 7530 S5.8.1.4)");
 	cd_or_skip(myname, dir, Nflag);
-
-	char name[64];
-	int fd = scratch_open("t_chg", name, sizeof(name));
-	close(fd);
-
-	feature_probe(name);
 
 	if (Tflag) clock_gettime(CLOCK_MONOTONIC, &t0);
 
-	/* Case 1 is implicit: feature_probe + any other case confirms
-	 * that STATX_CHANGE_COOKIE is populated post-create. */
-	RUN_CASE("case_write_advances", case_write_advances(name));
-	RUN_CASE("case_monotonic", case_monotonic(name));
-	RUN_CASE("case_read_does_not_advance", case_read_does_not_advance(name));
-	RUN_CASE("case_chmod_advances", case_chmod_advances(name));
-
-	unlink(name);
+	RUN_CASE("case_mutation_visible", case_mutation_visible());
+	RUN_CASE("case_metadata_mutation_visible",
+		 case_metadata_mutation_visible());
+	RUN_CASE("case_pure_read_no_mutation",
+		 case_pure_read_no_mutation());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);
@@ -293,6 +311,3 @@ next:
 
 	return finish(myname);
 }
-
-#endif /* STATX_CHANGE_COOKIE */
-#endif /* __linux__ */
