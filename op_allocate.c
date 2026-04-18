@@ -28,6 +28,15 @@
  *      cleanly but get the mid-file hole-fill path wrong (e.g.,
  *      leaving stale server-side allocated-but-unwritten bytes).
  *
+ *   7. Overlapping ALLOCATE ranges.  posix_fallocate(file, 0, 64K)
+ *      then posix_fallocate(file, 32K, 64K).  Union ends at 96K,
+ *      overlap region is [32K..64K).  Post-state: size >= 96K,
+ *      every byte in [0..96K) reads zero (allocate must not leak
+ *      stale bytes, even across repeated allocations of the same
+ *      range).  Complements op_deallocate's overlapping-punches
+ *      case; catches servers that over-count allocated blocks or
+ *      fail idempotency across overlapping ALLOCATEs.
+ *
  * Indicative server-op check: after the extend in case 1, st_blocks
  * should be greater than zero on backends that actually allocated.
  * A client that emulates ALLOCATE via WRITE-of-zeros also produces
@@ -415,6 +424,72 @@ static void case_allocate_into_hole(off_t dense)
 	unlink(name);
 }
 
+static void case_overlapping_allocate(void)
+{
+	char name[64];
+	int fd = scratch_open("t10c7", name, sizeof(name));
+
+	const off_t off_a = 0;
+	const off_t len_a = 64 * 1024;
+	const off_t off_b = 32 * 1024;
+	const off_t len_b = 64 * 1024;
+	const off_t union_end = off_b + len_b;  /* 96 KiB */
+
+	int rc = do_fallocate(fd, off_a, len_a);
+	if (rc == EINVAL || rc == ENOSYS || rc == EOPNOTSUPP) {
+		if (!Sflag)
+			printf("NOTE: %s: case7 first ALLOCATE %s -- "
+			       "skipping\n", myname, strerror(rc));
+		close(fd); unlink(name); return;
+	}
+	if (rc != 0) {
+		complain("case7: first posix_fallocate: %s", strerror(rc));
+		close(fd); unlink(name); return;
+	}
+
+	rc = do_fallocate(fd, off_b, len_b);
+	if (rc != 0) {
+		complain("case7: second overlapping posix_fallocate: %s "
+			 "(server must accept repeated/overlapping ALLOCATE)",
+			 strerror(rc));
+		close(fd); unlink(name); return;
+	}
+
+	struct stat st;
+	if (fstat(fd, &st) != 0) {
+		complain("case7: fstat: %s", strerror(errno));
+		close(fd); unlink(name); return;
+	}
+	if (st.st_size < union_end)
+		complain("case7: size %lld < union end %lld after "
+			 "overlapping ALLOCATEs",
+			 (long long)st.st_size, (long long)union_end);
+
+	/*
+	 * Every byte in [0..96K) must read as zero.  A server that
+	 * didn't properly zero-fill the overlap region, or that
+	 * somehow re-exposed stale backing bytes when the second
+	 * ALLOCATE covered already-allocated space, fails here.
+	 */
+	unsigned char *buf = malloc((size_t)union_end);
+	if (!buf) {
+		complain("case7: malloc");
+		close(fd); unlink(name); return;
+	}
+	if (pread_all(fd, buf, (size_t)union_end, 0,
+		      "case7: verify union") == 0) {
+		if (!all_zero(buf, (size_t)union_end))
+			complain("case7: union [0..%lld) not all-zero "
+				 "after overlapping ALLOCATEs "
+				 "(stale backing bytes exposed?)",
+				 (long long)union_end);
+	}
+	free(buf);
+
+	close(fd);
+	unlink(name);
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -455,6 +530,8 @@ next:
 	RUN_CASE("case_negative_offset", case_negative_offset());
 	RUN_CASE("case_allocate_into_hole",
 		 case_allocate_into_hole(512 * 1024));
+	RUN_CASE("case_overlapping_allocate",
+		 case_overlapping_allocate());
 
 	if (Tflag) {
 		clock_gettime(CLOCK_MONOTONIC, &t1);

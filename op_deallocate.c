@@ -34,6 +34,14 @@
  *      because of the existing hole, or that incorrectly extend the
  *      first hole's bookkeeping past the second range.
  *
+ *   7. Idempotent punch of an already-deallocated range.  Punch
+ *      [16K..48K), then punch the SAME range again.  Second call
+ *      must succeed and be a no-op: size unchanged, content still
+ *      all-zero in the range, tail still intact.  Catches servers
+ *      that treat DEALLOCATE as non-idempotent (returning an error
+ *      on the repeat, or worse, extending the hole bookkeeping
+ *      past the requested length on the second call).
+ *
  * PUNCH_HOLE on Linux requires FALLOC_FL_KEEP_SIZE; this is what
  * the NFSv4.2 client translates into DEALLOCATE.
  */
@@ -406,6 +414,84 @@ static void case_overlapping_punches(int fd)
 	free(exp);
 }
 
+static void case_idempotent_punch(int fd)
+{
+	if (write_pattern(fd, 0x17) < 0)
+		return;
+	fdatasync(fd);
+
+	const off_t off = 16 * 1024;
+	const off_t len = 32 * 1024;
+
+	if (punch(fd, off, len) != 0) {
+		complain("case7: first punch: %s", strerror(errno));
+		return;
+	}
+
+	struct stat st_mid;
+	if (fstat(fd, &st_mid) != 0) {
+		complain("case7: fstat after first punch: %s",
+			 strerror(errno));
+		return;
+	}
+
+	/* Second identical punch must be a clean no-op. */
+	if (punch(fd, off, len) != 0) {
+		complain("case7: second punch of identical range: %s "
+			 "(DEALLOCATE must be idempotent)", strerror(errno));
+		return;
+	}
+
+	struct stat st_after;
+	if (fstat(fd, &st_after) != 0) {
+		complain("case7: fstat after second punch: %s",
+			 strerror(errno));
+		return;
+	}
+	if (st_after.st_size != st_mid.st_size)
+		complain("case7: size changed across idempotent punch "
+			 "(%lld -> %lld)",
+			 (long long)st_mid.st_size,
+			 (long long)st_after.st_size);
+	if (st_after.st_blocks != st_mid.st_blocks && !Sflag)
+		printf("NOTE: %s: case7 st_blocks changed across "
+		       "idempotent punch (%lld -> %lld)\n", myname,
+		       (long long)st_mid.st_blocks,
+		       (long long)st_after.st_blocks);
+
+	/* Punched range still reads zero. */
+	unsigned char *z = malloc((size_t)len);
+	if (!z) {
+		complain("case7: malloc z");
+		return;
+	}
+	if (pread_all(fd, z, (size_t)len, off,
+		      "case7: verify hole") == 0) {
+		if (!all_zero(z, (size_t)len))
+			complain("case7: range [%lld..%lld) not zero after "
+				 "idempotent second punch", (long long)off,
+				 (long long)(off + len));
+	}
+	free(z);
+
+	/* Tail past the punched range must still be pattern. */
+	off_t tail_off = off + len;
+	size_t tail_len = FILE_LEN - tail_off;
+	unsigned char *tail = malloc(tail_len);
+	unsigned char *exp  = malloc(FILE_LEN);
+	if (!tail || !exp) {
+		complain("case7: malloc tail/exp");
+	} else if (pread_all(fd, tail, tail_len, tail_off,
+			     "case7: tail") == 0) {
+		fill_pattern(exp, FILE_LEN, 0x17);
+		if (memcmp(tail, exp + tail_off, tail_len) != 0)
+			complain("case7: tail corrupted past idempotent "
+				 "punch (second call extended the hole?)");
+	}
+	free(tail);
+	free(exp);
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -451,6 +537,8 @@ next:
 		 case_negative_offset_or_length(fd));
 	RUN_CASE("case_overlapping_punches",
 		 case_overlapping_punches(fd));
+	RUN_CASE("case_idempotent_punch",
+		 case_idempotent_punch(fd));
 
 	close(fd);
 	unlink(name);
