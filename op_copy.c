@@ -56,6 +56,22 @@
  *           the time of the call; we check byte-for-byte on a
  *           fresh reopen to dodge any cached-state confusion.
  *
+ *   7. Special-file sources and destinations.  copy_file_range(2)
+ *      is defined only for regular files (Linux man page:
+ *      "Both src_fd and dst_fd must refer to regular files").
+ *      A symlink source / FIFO source / directory destination must
+ *      be rejected -- Linux returns EINVAL on non-regular fd,
+ *      EISDIR on a directory.  Catches servers that try to COPY
+ *      across file types and return success or the wrong errno.
+ *
+ *   8. Large-offset copy (>4 GiB).  A sparse 5 GiB file, copy a
+ *      small byte range starting at offset 4 GiB + 4 bytes.  If
+ *      the XDR COPY op truncates offsets to 32 bits anywhere along
+ *      the wire path, the copy lands at offset 4 instead -- the
+ *      content check at the intended offset catches it.  Skipped
+ *      as NOTE if the backing filesystem can't accommodate a 5 GiB
+ *      sparse file (ENOSPC on ftruncate).
+ *
  * Feature probe: we do a real 1-byte copy up front to detect
  * ENOSYS / EOPNOTSUPP before the main cases run.  A zero-length
  * probe is not sufficient because the kernel fast-paths that to 0
@@ -576,6 +592,205 @@ static void case_intra_file(int sfd, int dfd)
 	unlink(lname);
 }
 
+static void case_special_files(int sfd, int dfd)
+{
+	/*
+	 * Copy with each non-regular type as source or destination.
+	 * We exercise symlink, directory, and FIFO; device nodes require
+	 * mknod/CAP_MKNOD and aren't portable to non-root test runs.
+	 */
+	char lnk[64], fifo[64], subdir[64];
+	snprintf(lnk,    sizeof(lnk),    "t13.sl.%ld", (long)getpid());
+	snprintf(fifo,   sizeof(fifo),   "t13.fo.%ld", (long)getpid());
+	snprintf(subdir, sizeof(subdir), "t13.sd.%ld", (long)getpid());
+	unlink(lnk); unlink(fifo); rmdir(subdir);
+
+	/*
+	 * Seed the harness's src and dst with a trivial byte so the
+	 * syscall has something concrete to attempt to copy.
+	 */
+	if (ftruncate(sfd, 0) != 0 || ftruncate(dfd, 0) != 0) {
+		complain("case7: ftruncate reset: %s", strerror(errno));
+		return;
+	}
+	unsigned char byte = 0x77;
+	if (pwrite_all(sfd, &byte, 1, 0, "case7: seed src") < 0)
+		return;
+
+	/* Create the non-regular objects. */
+	if (symlink("target", lnk) != 0) {
+		complain("case7: symlink: %s", strerror(errno));
+		return;
+	}
+	if (mkfifo(fifo, 0600) != 0) {
+		if (errno == ENOSYS || errno == EOPNOTSUPP) {
+			if (!Sflag)
+				printf("NOTE: %s: case7 mkfifo unsupported "
+				       "-- skipping FIFO subcases\n", myname);
+		} else {
+			complain("case7: mkfifo: %s", strerror(errno));
+			unlink(lnk);
+			return;
+		}
+	}
+	if (mkdir(subdir, 0755) != 0) {
+		complain("case7: mkdir: %s", strerror(errno));
+		unlink(lnk); unlink(fifo);
+		return;
+	}
+
+	/*
+	 * Subcase A: symlink as source.  open(lnk, O_RDONLY) would
+	 * follow the link; we want the link itself.  Use O_PATH
+	 * (Linux) with O_NOFOLLOW to open the symlink without
+	 * following -- copy_file_range must reject the non-regular fd.
+	 */
+#ifdef O_PATH
+	int slfd = open(lnk, O_PATH | O_NOFOLLOW);
+	if (slfd >= 0) {
+		off_t so = 0, doo = 0;
+		errno = 0;
+		ssize_t n = copy_file_range(slfd, &so, dfd, &doo, 1, 0);
+		if (n >= 0) {
+			complain("case7a: copy_file_range accepted symlink "
+				 "(O_PATH) source (returned %zd; expected "
+				 "EBADF or EINVAL)", n);
+		} else if (errno != EBADF && errno != EINVAL) {
+			if (!Sflag)
+				printf("NOTE: %s: case7a symlink src returned "
+				       "%s (EBADF or EINVAL expected; tolerated)\n",
+				       myname, strerror(errno));
+		}
+		close(slfd);
+	}
+#endif
+
+	/* Subcase B: FIFO as source. */
+	int fifofd = open(fifo, O_RDONLY | O_NONBLOCK);
+	if (fifofd >= 0) {
+		off_t so = 0, doo = 0;
+		errno = 0;
+		ssize_t n = copy_file_range(fifofd, &so, dfd, &doo, 1, 0);
+		if (n >= 0) {
+			complain("case7b: copy_file_range accepted FIFO "
+				 "source (returned %zd; expected EINVAL)", n);
+		} else if (errno != EINVAL) {
+			if (!Sflag)
+				printf("NOTE: %s: case7b FIFO src returned %s "
+				       "(EINVAL expected; tolerated)\n",
+				       myname, strerror(errno));
+		}
+		close(fifofd);
+	}
+
+	/* Subcase C: directory as destination. */
+	int dirfd = open(subdir, O_RDONLY | O_DIRECTORY);
+	if (dirfd >= 0) {
+		off_t so = 0, doo = 0;
+		errno = 0;
+		ssize_t n = copy_file_range(sfd, &so, dirfd, &doo, 1, 0);
+		if (n >= 0) {
+			complain("case7c: copy_file_range accepted directory "
+				 "destination (returned %zd; expected "
+				 "EISDIR or EBADF)", n);
+		} else if (errno != EISDIR && errno != EBADF
+			   && errno != EINVAL) {
+			if (!Sflag)
+				printf("NOTE: %s: case7c directory dst "
+				       "returned %s (EISDIR/EBADF/EINVAL "
+				       "expected; tolerated)\n",
+				       myname, strerror(errno));
+		}
+		close(dirfd);
+	}
+
+	unlink(lnk);
+	unlink(fifo);
+	rmdir(subdir);
+}
+
+static void case_large_offset(int sfd, int dfd)
+{
+	/*
+	 * Build a sparse 5 GiB src by ftruncate, write a known pattern
+	 * at offset 4 GiB + 4 bytes, then copy 16 bytes from there into
+	 * dst at offset 0.  If the COPY wire path truncates either
+	 * offset to 32 bits, dst[0..16) will contain zeros (the value
+	 * at src offset 4) instead of the pattern.
+	 */
+	const off_t big_off = (off_t)4 * 1024 * 1024 * 1024 + 4;
+	const off_t sparse_size = big_off + 4096;
+	const size_t sample_len = 16;
+	const unsigned char marker[16] = {
+		0x5A, 0xA5, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC,
+		0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+	};
+
+	if (ftruncate(sfd, 0) != 0 || ftruncate(dfd, 0) != 0) {
+		complain("case8: ftruncate reset: %s", strerror(errno));
+		return;
+	}
+	/* Sparse-grow src to 5 GiB.  ENOSPC / EFBIG from any FS
+	 * configured with size caps -> skip-as-NOTE. */
+	if (ftruncate(sfd, sparse_size) != 0) {
+		if (errno == ENOSPC || errno == EFBIG
+		    || errno == EOVERFLOW) {
+			if (!Sflag)
+				printf("NOTE: %s: case8 cannot ftruncate to "
+				       "5 GiB (%s) -- skipping large-offset "
+				       "probe\n", myname, strerror(errno));
+			return;
+		}
+		complain("case8: ftruncate(5 GiB): %s", strerror(errno));
+		return;
+	}
+	if (pwrite_all(sfd, marker, sample_len, big_off,
+		       "case8: pwrite marker") < 0)
+		return;
+	fdatasync(sfd);
+
+	off_t soff = big_off;
+	off_t doff = 0;
+	ssize_t n = copy_file_range(sfd, &soff, dfd, &doff,
+				    sample_len, 0);
+	if (n < 0) {
+		if (errno == EFBIG || errno == ENOSPC) {
+			if (!Sflag)
+				printf("NOTE: %s: case8 copy_file_range "
+				       "returned %s -- skipping\n",
+				       myname, strerror(errno));
+			return;
+		}
+		complain("case8: copy_file_range at 4 GiB+: %s",
+			 strerror(errno));
+		return;
+	}
+	if ((size_t)n != sample_len) {
+		complain("case8: short copy %zd (expected %zu)",
+			 n, sample_len);
+		return;
+	}
+
+	unsigned char rb[16];
+	if (pread_all(dfd, rb, sample_len, 0, "case8: verify dst") != 0)
+		return;
+	if (memcmp(rb, marker, sample_len) != 0) {
+		/*
+		 * If the first 4 bytes look like the contents at src
+		 * offset 4 (which is a sparse hole, so zeros) while our
+		 * marker's first 4 bytes are 0x5A 0xA5 0x12 0x34, the
+		 * wire path truncated the offset to 32 bits somewhere.
+		 */
+		complain("case8: dst[0..16) != marker at 4 GiB+4; "
+			 "COPY wire path may have truncated the offset "
+			 "to 32 bits "
+			 "(got %02x%02x%02x%02x..., expected "
+			 "%02x%02x%02x%02x...)",
+			 rb[0], rb[1], rb[2], rb[3],
+			 marker[0], marker[1], marker[2], marker[3]);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	const char *dir = ".";
@@ -622,6 +837,8 @@ next:
 	RUN_CASE("case_short_copy_atomicity",
 		 case_short_copy_atomicity(sfd, dfd));
 	RUN_CASE("case_intra_file", case_intra_file(sfd, dfd));
+	RUN_CASE("case_special_files", case_special_files(sfd, dfd));
+	RUN_CASE("case_large_offset", case_large_offset(sfd, dfd));
 
 	close(sfd);
 	close(dfd);
