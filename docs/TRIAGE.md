@@ -310,9 +310,9 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Tier**: CLIENT (ESTALE, NFS-specific)
 
-**Asserts**: Behaviour when a file handle becomes stale — the #1 NFS user complaint. Tests that ESTALE is returned at the right time, unlink-while-open works, rename tracks the inode correctly.
+**Asserts**: Behaviour when a file handle becomes stale — the #1 NFS user complaint. Tests that ESTALE is returned at the right time, unlink-while-open works, rename tracks the inode correctly, symlink and renamed-over handles are handled cleanly.
 
-**Cases**: See header of `op_stale_handle.c` for the full list.
+**Cases**: See header of `op_stale_handle.c` for the full list (now includes `case_symlink_handle_stale` and `case_rename_then_recreate`).
 
 **Failure patterns**
 
@@ -320,6 +320,11 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 |---|---|---|
 | any `ESTALE` where not expected | Server aggressively recycled a file handle while client still holds an open. On NFSv4, unlikely under normal conditions; NFSv3 more common. | Check server's `fsid`/handle-generation policy. Linux knfsd: `/proc/fs/nfsd/*`. |
 | `case ... open fd became invalid after ...` | NFS client didn't silly-rename on open+unlink. | Inspect `/proc/self/mountstats`; look for silly-rename counters. |
+| `case6: fstat on removed symlink returned %s (expected success, ESTALE, ENOENT, or EBADF)` | Unusual errno from fstat on a removed symlink's held fd. Spec leaves this under-specified but the expected set is tight. | Client-side emulation bug around O_PATH; capture the syscall path. |
+| `case7: held fd's inode changed across rename+recreate` | The held fd followed the path to the recreated inode instead of staying on the renamed original.  Real coherence bug: the fd must track the inode through any path-level mutations. | Real client bug; likely path-based fallback in the stat/read path after rename.  Capture the wire trace -- a correct client's GETATTR on the fd uses the cached fh, which still resolves to the original inode. |
+| `case7: held fd read != P1 after rename+recreate` | Content-side symptom of the same bug. | Same. |
+| `case7: new A has the same inode as the original` | Either the rename didn't actually move the inode, or the recreate clobbered the wrong entry. | Real server bug; compare the two inodes manually. |
+| `case7: path-A read != P2` | The recreate didn't land content at path A. | Real bug -- a fresh open(A, O_RDWR|O_CREAT|O_EXCL) + pwrite should always be visible. |
 
 **False positives**: On local filesystems everything passes. On NFS, occasional ESTALE on handle generation rollover is possible but rare.
 
@@ -912,7 +917,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: `copy_file_range(2)` maps to NFSv4.2 intra-server COPY. Data is transferred server-side (no round-trip through client memory) when source and destination are on the same server.
 
-**Cases**: `case_simple`, `case_offset`, `case_sparse_preservation`, `case_matrix_api` (generic/430), `case_short_copy_atomicity` (generic/265), `case_intra_file` (same-fd copy).
+**Cases**: `case_simple`, `case_offset`, `case_sparse_preservation`, `case_matrix_api` (generic/430), `case_short_copy_atomicity` (generic/265), `case_intra_file` (same-fd copy), `case_special_files` (symlink/FIFO/dir errnos), `case_large_offset` (>4 GiB).
 
 **Failure patterns**
 
@@ -931,6 +936,10 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case5: dst byte %zu = 0x%02x, expected 0x%02x (pattern B)` | Short-copy altered dst bytes past the returned count — tail zero-filled or garbage. This is the generic/265 class bug. | Real integrity bug: dst tail must be untouched on short copies. |
 | `case6a: non-overlapping intra-file copy: %s` | Same-fd copy_file_range fails where it should succeed. | Client-side src==dst path bug; check whether the NFS COPY RPC is actually emitted. |
 | `case6a: [64K..68K) != pattern A after intra-file copy` | Same-fd copy returned success but wrote the wrong bytes. | Real integrity bug. |
+| `case7a: copy_file_range accepted symlink (O_PATH) source` | Server accepted a non-regular source and returned success. | Real bug: copy_file_range(2) is defined only for regular files. |
+| `case7b: copy_file_range accepted FIFO source` | Same class -- FIFO as source should EINVAL. | Same. |
+| `case7c: copy_file_range accepted directory destination` | Same class -- dir as dst should EISDIR / EBADF / EINVAL. | Same. |
+| `case8: dst[0..16) != marker at 4 GiB+4; COPY wire path may have truncated the offset to 32 bits` | NFSv4.2 COPY sent the offset fields as 64-bit but the server (or an intermediate) truncated them.  Classic XDR-cleanliness bug. | Real server bug; compare against a manual pread/pwrite at the same large offset to confirm the COPY-path-specific break. |
 
 **False positives**: `copy_file_range` may fall back to a read/write loop on the client — all-zero hole preservation still required but may behave differently. Not a failure.
 
@@ -1158,7 +1167,9 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Tier**: SPEC (NFSv4.2 ALLOCATE, RFC 7862 §4)
 
-**Asserts**: `posix_fallocate(3)` preallocates disk blocks, extends the file if needed, and fills the extension with zeros.
+**Asserts**: `posix_fallocate(3)` preallocates disk blocks, extends the file if needed, and fills the extension with zeros. Mid-file hole-fill must zero the allocated range without leaking stale backing-store bytes.
+
+**Cases**: `case_extend_from_zero`, `case_grow_from_existing`, `case_inside_existing`, `case_zero_length`, `case_negative_offset`, `case_allocate_into_hole`.
 
 **Failure patterns**
 
@@ -1168,6 +1179,9 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case1: allocated region not all zero` | ALLOCATE extended the file but the new bytes are garbage. | Server bug — ALLOCATE must zero-fill. |
 | `case1: size %lld != expected` | ALLOCATE didn't extend the file size. | Server handled ALLOCATE as a no-op; not compliant with RFC 7862. |
 | `NOTE: st_blocks == 0 after ALLOCATE -- suspicious` | Informational: the server may have treated ALLOCATE as a promise without actually allocating. Not a conformance failure per se. | None — record the server backend. |
+| `case6: allocated hole bytes non-zero after mid-file ALLOCATE (server exposed stale backing bytes?)` | ALLOCATE into a mid-file hole exposed uninitialised server-side bytes.  Real integrity bug; ALLOCATE path is not zero-filling correctly. | Capture a READ of the range via wire trace; compare with a fresh zero-fill test at the same offset via pwrite. |
+| `case6: head pattern A corrupted by mid-file ALLOCATE` / `case6: tail pattern B corrupted` | Mid-file ALLOCATE wrote outside its requested range. | Server range-handling bug. |
+| `case6: size changed across hole-fill` | ALLOCATE without FALLOC_FL_KEEP_SIZE changed the file size. | Server misapplied the mode flag. |
 
 **Environmental gates**: Linux + server supporting NFSv4.2 ALLOCATE. Auto-skips on FreeBSD via EINVAL detection.
 
@@ -1713,6 +1727,11 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `fcntl F_WRLCK after flock(LOCK_EX) returned unexpected errno` | op_flock | Cross-model lock interaction returned wrong errno class |
 | `after iteration spanning an add` | op_readdir_mutation | Add-during-iteration broke original-entry cookies |
 | `after same-name replace` | op_readdir_mutation | Unlink+recreate of a dirent confused server cookies or attrs |
+| `allocated hole bytes non-zero after mid-file ALLOCATE` | op_allocate | ALLOCATE exposed stale backing bytes when filling a hole |
+| `copy_file_range accepted symlink (O_PATH) source` / `accepted FIFO source` / `accepted directory destination` | op_copy | Server/client accepted a non-regular file as src/dst |
+| `COPY wire path may have truncated the offset to 32 bits` | op_copy | 64-bit XDR cleanliness failure in the COPY path |
+| `held fd's inode changed across rename+recreate` | op_stale_handle | Held fd followed the path instead of staying on its original inode |
+| `fstat on removed symlink returned` | op_stale_handle | Unusual errno from O_PATH symlink fd after unlink |
 | `iovec ... ordering broken` | op_writev | Client writev fragmentation reordered iovec elements |
 | `overwrite lost` | op_overwrite | Client write-coalescing or server ordering dropped the overwrite |
 | `zero overwrite was dropped; original ... survived` | op_overwrite | Server dedup path mis-handling zero over allocated block |
