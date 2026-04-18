@@ -1116,17 +1116,17 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Tier**: SPEC (renameat2 / NFSv4 RENAME with atomic flags)
 
-**Asserts**: `renameat2(2)` with `RENAME_NOREPLACE` fails if target exists; with `RENAME_EXCHANGE` swaps two existing paths atomically. Client must pass these flags through to the server's RENAME op.
+**Asserts**: `renameat2(2)` with `RENAME_NOREPLACE` fails if target exists; with `RENAME_EXCHANGE` swaps two existing paths atomically. Over NFS, flag passthrough depends on both client support and the protocol.
 
 **Failure patterns**
 
 | Signature | Likely cause | Diagnose |
 |---|---|---|
-| `RENAME_NOREPLACE not supported (returned Invalid argument)` | Client ≤6.0 does not pass renameat2 flags through to NFS; returns EINVAL. Auto-SKIPs. | Upgrade client to Linux 6.1+ and retest. |
-| `RENAME_NOREPLACE: target replaced despite flag` | Client accepted the flag but didn't enforce; or server silently ignored the atomicity flag. | Real conformance bug. |
-| `RENAME_EXCHANGE: paths not swapped atomically` | Exchange produced intermediate state; observer saw one path empty momentarily. | Server doesn't implement exchange atomically. |
+| `RENAME_NOREPLACE unreachable here (returned Invalid argument) ... Linux NFS client rejects all renameat2 flags with EINVAL` | Auto-SKIP.  The Linux NFS client hard-rejects any renameat2 flag in `fs/nfs/dir.c` (`if (flags) return -EINVAL;`), and NFSv4's RENAME op has no flag field to carry them anyway.  Still true as of mainline 7.0. | Not a failure.  Fix would require either a client-side emulation (LOOKUP-then-RENAME, which has a TOCTOU race) or a protocol extension. |
+| `RENAME_NOREPLACE: target replaced despite flag` | Would indicate a local FS that accepted the flag but didn't enforce atomicity.  Never fires on NFS (SKIPs first). | Real conformance bug on a local FS. |
+| `RENAME_EXCHANGE: paths not swapped atomically` | Exchange produced intermediate state; observer saw one path empty momentarily. | Server or local FS bug. |
 
-**Environmental gates**: Linux 6.1+ client + server that supports NFSv4 RENAME with flag passthrough.
+**Environmental gates**: Linux-only syscall.  On NFS mounts always SKIPs today (client rejects flags).  Real coverage is only on local filesystems that support renameat2 flags (ext4, xfs, btrfs).
 
 ---
 
@@ -1789,7 +1789,7 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `st_ino changed between two stats` | op_verify | Attribute cache inconsistency / inode recycled |
 | `utimensat with AT_SYMLINK_NOFOLLOW advanced target mtime` | op_symlink_nofollow | Server ignored nofollow; modified target instead of link (classic NFS bug) |
 | `fchownat with AT_SYMLINK_NOFOLLOW changed target ownership` | op_symlink_nofollow | Same class — tar/rsync rely on this |
-| `RENAME_NOREPLACE not supported` | op_rename_atomic | Client < Linux 6.1 doesn't passthrough renameat2 flags — SKIP |
+| `RENAME_NOREPLACE unreachable here` | op_rename_atomic | NFS always SKIPs -- Linux NFS client rejects all renameat2 flags, NFSv4 protocol has no flag field |
 | `setuid/setgid not cleared after chown` | op_chmod_chown | POSIX security rule: chown must clear S_ISUID/S_ISGID |
 | `SEEK_HOLE at island0 reports premature hole` | op_seek | Server returned a hole offset inside the data extent |
 | `allocated region not all zero` | op_allocate | ALLOCATE extended the file but didn't zero-fill the extension |

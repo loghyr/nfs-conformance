@@ -129,10 +129,19 @@ static ssize_t read_all(const char *path, char *buf, size_t cap)
 /*
  * feature_probe_noreplace -- try a no-op rename with RENAME_NOREPLACE;
  * if the kernel or server returns EINVAL / ENOSYS / ENOTSUP, the flag
- * is not supported over this mount (common on Linux NFS clients with
- * kernel < 6.1 where the client doesn't pass flags through) and the
- * whole test SKIPs cleanly.  This must run before case_noreplace_*
- * so that case-level failure logic doesn't false-alarm on the gap.
+ * is not supported over this mount and the whole test SKIPs cleanly.
+ * This must run before case_noreplace_* so that case-level failure
+ * logic doesn't false-alarm on the gap.
+ *
+ * NFS-specific note: the Linux NFS client flatly rejects any
+ * renameat2(2) flags with EINVAL (fs/nfs/dir.c nfs_rename: `if (flags)
+ * return -EINVAL;`).  This is not a version gap -- mainline 7.0 still
+ * has that check -- because NFSv4's RENAME op (RFC 7530 S18.26,
+ * unchanged in RFC 8881 S18.26) has no flag field, so the client can't
+ * express "no-replace" semantics atomically on the wire.  Emulating
+ * it via LOOKUP-then-RENAME would race with other clients.  Until
+ * the protocol or the client's emulation policy changes, this test
+ * will SKIP on every NFS mount.
  */
 static void feature_probe_noreplace(void)
 {
@@ -156,9 +165,12 @@ static void feature_probe_noreplace(void)
 	unlink(src);
 	unlink(dst);
 	if (saved == EINVAL || saved == ENOSYS || saved == ENOTSUP) {
-		skip("%s: renameat2 RENAME_NOREPLACE not supported "
-		     "by this kernel/server (returned %s); Linux NFS "
-		     "client needs ~6.1+ for flag passthrough",
+		skip("%s: renameat2 RENAME_NOREPLACE unreachable here "
+		     "(returned %s).  Expected on NFS mounts: the Linux "
+		     "NFS client rejects all renameat2 flags with EINVAL "
+		     "(fs/nfs/dir.c nfs_rename), and NFSv4's RENAME op "
+		     "has no flag field to carry them.  Local filesystems "
+		     "without renameat2 flag support also end up here.",
 		     myname, strerror(saved));
 	}
 	complain("feature_probe: unexpected errno %s", strerror(saved));
