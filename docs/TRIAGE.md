@@ -90,6 +90,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 - [op_rename_nlink](#op_rename_nlink)
 - [op_rename_open_target](#op_rename_open_target)
 - [op_readdir_mutation](#op_readdir_mutation)
+- [op_readdir_concurrent](#op_readdir_concurrent)
 - [op_readdir_many](#op_readdir_many)
 - [op_timestamps](#op_timestamps)
 - [op_errno_rename](#op_errno_rename)
@@ -711,6 +712,29 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 ---
 
+### <a id="op_readdir_concurrent"></a>op_readdir_concurrent
+
+**Tier**: SPEC (NFSv4 READDIR continuation cookies, RFC 7530 §18.23)
+
+**Asserts**: M workers each open their own DIR* on the same directory and enumerate independently.  Every worker must see every entry exactly once.  If server READDIR continuation state is keyed per-directory-object instead of per-open, workers' cookies collide -- producing duplicates, missing entries, or foreign-name leakage.
+
+**Cases**: `case_concurrent_basic` (portable readdir(3), 256 entries, 6 workers), `case_concurrent_tiny_buffer` (Linux-only getdents64 with 192-byte user buffer, same populate -- maximum RPC churn), `case_concurrent_long_names` (~200-char names -- bloated dirents force smaller per-reply entry counts on the wire).
+
+**Failure patterns**
+
+| Signature | Likely cause | Diagnose |
+|---|---|---|
+| `caseN: worker W saw N duplicates (concurrent cookie confusion)` | One worker's readdir returned the same entry more than once under concurrent load. Strong signal the server's cookie state is shared across opens. | Capture a multi-worker wire trace: look for a cookie value emitted to worker A being echoed in worker B's READDIR request.  Server-side fix is per-open cookie state. |
+| `caseN: worker W missed N of M entries (cookie drift)` | Entries existed but the worker didn't see them.  Same class: another worker's READDIR advanced shared server state past this worker's position. | Same as above. |
+| `caseN: worker W saw N entries with unexpected names (foreign cookie leakage)` | Entries from some OTHER directory the server had cached state for leaked into this worker's reply. Often caused by cookie-table collisions keyed by a hash with inadequate entropy. | Real server bug.  Very strong signal. |
+| `caseN: worker W exited 0x##` | The worker's readdir path errored out (e.g., EINVAL on a continuation).  Harness-level; not a content finding. | Check the worker's exit code against `_exit` values in the source (10 = fopen obs, 11 = opendir, 12 = getdents64). |
+| `NOTE: case2 Linux-only ... skipping` | Platform gate: getdents64 with user-set buffer size is Linux-only. | Not a failure. |
+| `NOTE: case3 backing FS rejects long names -- skipping` | Long-name path unsupported on this backend. | Not a failure. |
+
+**Environmental gates**: None for case 1; Linux for case 2; NAME_MAX >= 200 for case 3.
+
+---
+
 ### <a id="op_readdir_many"></a>op_readdir_many
 
 **Tier**: SPEC (NFSv4 READDIR cookie continuation)
@@ -1169,7 +1193,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: `posix_fallocate(3)` preallocates disk blocks, extends the file if needed, and fills the extension with zeros. Mid-file hole-fill must zero the allocated range without leaking stale backing-store bytes.
 
-**Cases**: `case_extend_from_zero`, `case_grow_from_existing`, `case_inside_existing`, `case_zero_length`, `case_negative_offset`, `case_allocate_into_hole`.
+**Cases**: `case_extend_from_zero`, `case_grow_from_existing`, `case_inside_existing`, `case_zero_length`, `case_negative_offset`, `case_allocate_into_hole`, `case_overlapping_allocate`.
 
 **Failure patterns**
 
@@ -1182,6 +1206,9 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case6: allocated hole bytes non-zero after mid-file ALLOCATE (server exposed stale backing bytes?)` | ALLOCATE into a mid-file hole exposed uninitialised server-side bytes.  Real integrity bug; ALLOCATE path is not zero-filling correctly. | Capture a READ of the range via wire trace; compare with a fresh zero-fill test at the same offset via pwrite. |
 | `case6: head pattern A corrupted by mid-file ALLOCATE` / `case6: tail pattern B corrupted` | Mid-file ALLOCATE wrote outside its requested range. | Server range-handling bug. |
 | `case6: size changed across hole-fill` | ALLOCATE without FALLOC_FL_KEEP_SIZE changed the file size. | Server misapplied the mode flag. |
+| `case7: second overlapping posix_fallocate: %s (server must accept repeated/overlapping ALLOCATE)` | Server rejected an ALLOCATE call covering already-allocated space. ALLOCATE must be idempotent. | Real server bug; check ALLOCATE code path for the "already allocated" check. |
+| `case7: union [0..X) not all-zero after overlapping ALLOCATEs (stale backing bytes exposed?)` | Second ALLOCATE didn't properly zero-fill the overlap. Worst case: leaked stale backing-store bytes. | Real integrity bug. |
+| `case7: size ... < union end ... after overlapping ALLOCATEs` | File size didn't grow to cover the second range's end. | Server range handling bug. |
 
 **Environmental gates**: Linux + server supporting NFSv4.2 ALLOCATE. Auto-skips on FreeBSD via EINVAL detection.
 
@@ -1246,7 +1273,7 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 
 **Asserts**: `fallocate(FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE)` punches a hole in an existing file. Size unchanged, `st_blocks` may drop, reads from the hole return zeros. Zero-length, negative, and overlapping punches behave correctly (reject or no-op, never silent corruption).
 
-**Cases**: `case_basic_punch`, `case_hole_at_eof`, `case_full_punch`, `case_zero_length_punch`, `case_negative_offset_or_length`, `case_overlapping_punches`.
+**Cases**: `case_basic_punch`, `case_hole_at_eof`, `case_full_punch`, `case_zero_length_punch`, `case_negative_offset_or_length`, `case_overlapping_punches`, `case_idempotent_punch`.
 
 **Failure patterns**
 
@@ -1264,6 +1291,9 @@ Top-priority tests (NFS-bug-finding value ranked high) are triaged in detail. Ot
 | `case6: second punch (overlapping): %s` | Server rejected a PUNCH that overlaps an existing hole. | Server bookkeeping bug: DEALLOCATE must be idempotent across overlapping ranges. |
 | `case6: union [0..X) not zero after overlapping punches` | Second punch left bytes non-zero in its requested range. | Real bug. |
 | `case6: tail corrupted past overlapping punch union` | Second punch leaked past its requested length, usually because the server extended the first hole's bookkeeping. | Server bookkeeping bug. |
+| `case7: second punch of identical range: %s (DEALLOCATE must be idempotent)` | Server rejected a repeat PUNCH_HOLE of a range it already punched. DEALLOCATE must be idempotent. | Real server bug; check that the "already punched" detection returns success, not an error. |
+| `case7: range [X..Y) not zero after idempotent second punch` | Second identical punch corrupted the previously-zeroed range. | Server re-exposed backing bytes on the idempotent path. |
+| `case7: tail corrupted past idempotent punch (second call extended the hole?)` | Second identical punch wrote beyond its requested length. | Server range handling bug. |
 
 **Environmental gates**: Linux only. NFSv4.2 server support required.
 
@@ -1732,6 +1762,11 @@ Searchable lookup when you have a failure substring and don't yet know what fire
 | `COPY wire path may have truncated the offset to 32 bits` | op_copy | 64-bit XDR cleanliness failure in the COPY path |
 | `held fd's inode changed across rename+recreate` | op_stale_handle | Held fd followed the path instead of staying on its original inode |
 | `fstat on removed symlink returned` | op_stale_handle | Unusual errno from O_PATH symlink fd after unlink |
+| `concurrent cookie confusion` | op_readdir_concurrent | Multi-worker readdir saw duplicates -- server shared cookie state across opens |
+| `cookie drift under concurrent readdir` | op_readdir_concurrent | Multi-worker readdir missed entries -- same class |
+| `foreign cookie leakage` | op_readdir_concurrent | Entries from an unrelated directory leaked into this directory's readdir |
+| `union ... not all-zero after overlapping ALLOCATEs` | op_allocate | Overlapping ALLOCATE leaked stale bytes on the re-allocated region |
+| `DEALLOCATE must be idempotent` | op_deallocate | Second identical PUNCH_HOLE returned an error or mutated content |
 | `iovec ... ordering broken` | op_writev | Client writev fragmentation reordered iovec elements |
 | `overwrite lost` | op_overwrite | Client write-coalescing or server ordering dropped the overwrite |
 | `zero overwrite was dropped; original ... survived` | op_overwrite | Server dedup path mis-handling zero over allocated block |
